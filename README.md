@@ -21,3 +21,9 @@ Assume we have two years of historical electricity price data from energy market
 - [ ] Transformer
 
 
+## Transformers
+- [ ] TimesNet
+- [ ] DLinear
+- [ ] Non-stationary Transformer
+- [ ] Autoformer
+- [ ] Informer
