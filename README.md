@@ -27,3 +27,5 @@ Assume we have two years of historical electricity price data from energy market
 - [ ] Non-stationary Transformer
 - [ ] Autoformer
 - [ ] Informer
+- [ ] Temporal Fusion Transformer
+- [ ] TiDE
