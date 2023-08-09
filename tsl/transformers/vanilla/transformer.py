@@ -2,8 +2,8 @@ import tensorflow as tf
 import numpy as np
 
 class PositionalEncoder(tf.keras.layers.Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, ):
+        super().__init__()
 
     def get_angles(self, pos, i, embedding_dim):
         """ Get the angles for the positional encoding
@@ -53,6 +53,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         self.embedding_dim = embedding_dim
         # mask_zero=True to support variable length sequences using masking
         # padding mask is added in the encoder
+        # Tensorflow will propagate the mask through the layers automatically
         self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim, mask_zero=True)
         self.pos_encoding = PositionalEncoder()
         # drop
@@ -84,11 +85,11 @@ class BaseAttention(tf.keras.layers.Layer):
         self.add = tf.keras.layers.Add()
 
 class CrossAttention(BaseAttention): 
-    def call(self, x, context):
+    def call(self, x, enc_output):
         attn_output, attn_scores = self.mha(
             query = x, 
-            key = context,
-            value = context, 
+            key = enc_output,
+            value = enc_output, 
             return_attention_scores=True)
         # save the attention scores for visualization
         self.last_attn_scores = attn_scores
@@ -114,6 +115,8 @@ class GlobalSelfAttention(BaseAttention):
         return x
     
 class CausalSelfAttention(BaseAttention):
+    # the new tensorflow version has the causal mask built in
+    # no need to manually create the mask
     def call(self, x):
         attn_output = self.mha(
             query = x,
@@ -148,7 +151,7 @@ class EncoderLayer(tf.keras.layers.Layer):
         super().__init__()
         self.self_attention = GlobalSelfAttention(
             num_heads=num_heads, 
-            key_dim=d_model, 
+            key_dim=d_model // num_heads, 
             dropout=dropout_rate
         )
         self.ffn = FeedForward(d_model, ffn_hidden_dim, dropout_rate)
@@ -193,12 +196,12 @@ class DecoderLayer(tf.keras.layers.Layer):
         super().__init__()
         self.causal_self_attention = CausalSelfAttention(
             num_heads=num_heads, 
-            key_dim=d_model, 
+            key_dim=d_model // num_heads, 
             dropout=dropout_rate
         )
         self.cross_attention = CrossAttention(
             num_heads=num_heads, 
-            key_dim=d_model, 
+            key_dim=d_model // num_heads, 
             dropout=dropout_rate
         )
         self.ffn = FeedForward(d_model, ffn_hidden_dim, dropout_rate)
@@ -321,3 +324,11 @@ if __name__ == "__main__":
     # encoder 
     encoder = Encoder(num_layers=2, d_model=50, num_heads=10, ffn_hidden_dim=2048, vocab_size=1000)
     print(encoder(seq, training=True).shape)
+    
+    # test multihead attention: k_dim = d_model // num_heads
+    mha = tf.keras.layers.MultiHeadAttention(num_heads=2, key_dim=512)
+    target = tf.keras.Input(shape=[8, 50])
+    source = tf.keras.Input(shape=[10, 50])
+    output, att_score = mha(query=target, value=source, key=source, return_attention_scores=True)
+    print(output.shape, att_score.shape)
+    print(mha.trainable_variables[0].shape)
