@@ -48,8 +48,8 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         inputs: input tensor of shape (batch_size, seq_len)
     """
     
-    def __init__(self, vocab_size, embedding_dim, dropout_rate=0.1, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, vocab_size, embedding_dim, dropout_rate=0.1):
+        super().__init__()
         self.embedding_dim = embedding_dim
         # mask_zero=True to support variable length sequences using masking
         # padding mask is added in the encoder
@@ -62,7 +62,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         # computer padding mask: mask all the 0s in the input
         return self.embedding.compute_mask(*args, **kwargs)
     
-    def call(self, inputs, training):
+    def call(self, inputs):
 
         # embedding: (B, seq, embedding_dim)
         x = self.embedding(inputs)
@@ -71,7 +71,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         # add positional embedding: (1, seq, embedding_dim)
         x += self.pos_encoding(x)
         # pass the encoded embedding through a dropout layer
-        x = self.dropout(x, training = training)
+        x = self.dropout(x)
         
         return x 
 
@@ -128,10 +128,10 @@ class CausalSelfAttention(BaseAttention):
         return x
         
 class FeedForward(tf.keras.layers.Layer):
-    def __init__(self, embedding_dim, dff, dropout_rate=0.1, **kwargs):
+    def __init__(self, embedding_dim, ffn_hidden_dim, dropout_rate=0.1, **kwargs):
         super().__init__()
         self.ffn = tf.keras.Sequential([
-            tf.keras.layers.Dense(dff, activation='relu'),
+            tf.keras.layers.Dense(ffn_hidden_dim, activation='relu'),
             tf.keras.layers.Dense(embedding_dim),
             tf.keras.layers.Dropout(dropout_rate)
         ])
@@ -143,8 +143,158 @@ class FeedForward(tf.keras.layers.Layer):
         x = self.layer_norm(x)
         return x
 
+class EncoderLayer(tf.keras.layers.Layer):
+    def __init__(self, d_model, num_heads, ffn_hidden_dim, dropout_rate=0.1, **kwargs):
+        super().__init__()
+        self.self_attention = GlobalSelfAttention(
+            num_heads=num_heads, 
+            key_dim=d_model, 
+            dropout=dropout_rate
+        )
+        self.ffn = FeedForward(d_model, ffn_hidden_dim, dropout_rate)
+        
+    def call(self, x):
+        x = self.self_attention(x)
+        x = self.ffn(x)
+        return x
 
+class Encoder(tf.keras.layers.Layer):
+    def __init__(self, *, num_layers, d_model, num_heads, ffn_hidden_dim, vocab_size, dropout_rate=0.1):
+        super().__init__()
+        self.d_model = d_model 
+        self.num_layers = num_layers
+        
+        # positional embedding        
+        self.pos_embedding = PositionalEmbedding(vocab_size, d_model, dropout_rate)
+        
+        # encoder layers
+        self.enc_layers = [
+            EncoderLayer(d_model, num_heads, ffn_hidden_dim, dropout_rate) 
+            for _ in range(num_layers)
+        ]
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+    
+    def call(self, x):
+        # x: (B, seq_len) -> (B, seq_len, d_model)
+        x = self.pos_embedding(x)
+        
+        # add a dropout layer
+        x = self.dropout(x)
+        
+        # for each encoder layer
+        # (B, seq_len, d_model) -> (B, seq_len, d_model)
+        for i in range(self.num_layers):
+            x = self.enc_layers[i](x)
+        
+        return x
+    
+class DecoderLayer(tf.keras.layers.Layer):
+    def __init__(self, *, d_model, num_heads, ffn_hidden_dim, dropout_rate=0.1):
+        super().__init__()
+        self.causal_self_attention = CausalSelfAttention(
+            num_heads=num_heads, 
+            key_dim=d_model, 
+            dropout=dropout_rate
+        )
+        self.cross_attention = CrossAttention(
+            num_heads=num_heads, 
+            key_dim=d_model, 
+            dropout=dropout_rate
+        )
+        self.ffn = FeedForward(d_model, ffn_hidden_dim, dropout_rate)
+        
+    def call(self, x, enc_output):
+        # causal self attention
+        x = self.causal_self_attention(x)
+        
+        # cross attention
+        x = self.cross_attention(x, enc_output)
+        
+        # cache the last attention scores for visualization
+        self.last_attn_scores = self.cross_attention.last_attn_scores
+        
+        # ffn
+        x = self.ffn(x)
+        
+        return x
 
+class Decoder(tf.keras.layers.Layer):
+    def __init__(self, *, num_layers, d_model, num_heads, ffn_hidden_dim, vocab_size, dropout_rate=0.1):
+        super().__init__()
+        self.d_model = d_model 
+        self.num_layers = num_layers
+        
+        # positional embedding        
+        self.pos_embedding = PositionalEmbedding(vocab_size, d_model, dropout_rate)
+        
+        # decoder layers
+        self.dec_layers = [
+            DecoderLayer(d_model, num_heads, ffn_hidden_dim, dropout_rate) 
+            for _ in range(num_layers)
+        ]
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+
+        self.last_attn_scores = None
+    
+    def call(self, x, enc_output):
+        # x: (B, target_seq_len) -> (B, target_seq_len, d_model)
+        x = self.pos_embedding(x)
+        
+        # add a dropout layer
+        x = self.dropout(x)
+        
+        # for each decoder layer
+        # (B, seq_len, d_model) -> (B, seq_len, d_model)
+        for i in range(self.num_layers):
+            x = self.dec_layers[i](x, enc_output)
+        
+        self.last_attn_scores = self.dec_layers[-1].last_attn_scores
+        
+        return x
+
+class Transformer(tf.keras.Model):
+    def __init__(self, *, num_layers, d_model, num_heads, ffn_hidden_dim, input_vocab_size, target_vocab_size, dropout_rate=0.1):
+        super().__init__()
+        self.encoder = Encoder(
+            num_layers=num_layers, 
+            d_model=d_model, 
+            num_heads=num_heads, 
+            dff=ffn_hidden_dim, 
+            vocab_size=input_vocab_size, 
+            dropout_rate=dropout_rate
+        )
+        self.decoder = Decoder(
+            num_layers=num_layers, 
+            d_model=d_model, 
+            num_heads=num_heads, 
+            dff=ffn_hidden_dim, 
+            vocab_size=target_vocab_size, 
+            dropout_rate=dropout_rate
+        )
+        self.final_layer = tf.keras.layers.Dense(target_vocab_size)
+        
+    def call(self, inputs):
+        # To use a Keras model with `.fit` you must pass all your inputs in the
+        # first argument.
+        x, y = inputs
+        # x: (B, seq_len) -> (B, seq_len, d_model)
+        enc_output = self.encoder(x)
+        
+        # y: (B, target_seq_len) -> (B, target_seq_len, d_model)
+        dec_output = self.decoder(y, enc_output)
+        
+        # (B, target_seq_len, d_model) -> (B, target_seq_len, vocab_size)
+        final_output = self.final_layer(dec_output)
+        
+        # drop the keras mask
+        try:
+            del final_output._keras_mask
+        except AttributeError:
+            pass
+        
+        return final_output
+
+   
 if __name__ == "__main__":
     
     embed = PositionalEmbedding(vocab_size=1000, embedding_dim=50)
@@ -152,7 +302,7 @@ if __name__ == "__main__":
     seq = tf.random.uniform((64, 10), maxval = 1000, dtype=tf.int32)
     out = embed(seq)
     print(seq.shape, out.shape)
-    #print(embed._keras_mask)
+    print(out._keras_mask)
 
     # cross attention
     sample_ca = CrossAttention(num_heads=2, key_dim=512)
@@ -163,3 +313,11 @@ if __name__ == "__main__":
     # ffn
     sample_ffn = FeedForward(50, 2048)
     print(sample_ffn(out).shape)
+    
+    # encoder layer
+    enc_layer = EncoderLayer(50, 10, 2048)
+    print(enc_layer(out).shape)
+    
+    # encoder 
+    encoder = Encoder(num_layers=2, d_model=50, num_heads=10, ffn_hidden_dim=2048, vocab_size=1000)
+    print(encoder(seq, training=True).shape)
