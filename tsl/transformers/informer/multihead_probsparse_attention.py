@@ -267,7 +267,7 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
              inputs, 
              scale=True, 
              attention_mask=None, 
-             use_causal_mask=True, 
+             use_causal_mask=False, 
              return_attention_scores=True, 
              ):
         
