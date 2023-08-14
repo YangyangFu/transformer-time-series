@@ -29,3 +29,10 @@ Assume we have two years of historical electricity price data from energy market
 - [ ] Informer
 - [ ] Temporal Fusion Transformer
 - [ ] TiDE
+
+## Notes
+1. How padding mask and causal mask work in transformer?
+2. Is padding mask implemented for each attention layer or just the first layer in both encoder and decoder?
+3. How does tensorflow automatically propagate mask to each attention layer?
+4. How does tensorflow automatically propage mask to cross-attention layer with different masks from source and target?
+5. tensorflow reshape() API or layer drops the mask as _keras_mask. How to keep the mask while reshaping?

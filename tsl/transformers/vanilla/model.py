@@ -58,7 +58,9 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         self.pos_encoding = PositionalEncoder()
         # drop
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
-        
+    
+    # this is needed for keras to automatically propagate the mask
+    # compute_mask() is called by keras to generate mask, and default generation is propagating
     def compute_mask(self, *args, **kwargs):
         # computer padding mask: mask all the 0s in the input
         return self.embedding.compute_mask(*args, **kwargs)
