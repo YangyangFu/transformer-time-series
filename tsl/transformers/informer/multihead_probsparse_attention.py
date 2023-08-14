@@ -35,6 +35,8 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         # output
         self.output_projection = tf.keras.layers.Dense(units = self.output_dim, use_bias=self.use_bias)
         
+        # support propagation of mask
+        self.supports_masking = True
             
     def _compute_causal_mask(self, query, value=None):
         """Computes a causal mask (e.g., for masked self-attention layers).
@@ -67,7 +69,7 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
     def _compute_attention_mask(self, query, value=None, key=None, attention_mask=None, use_causal_mask=False):
 
         # attention propagated from previous layer such as embedding layer
-        # attention_mask shape: [B, T], or [B, S]
+        # shape: [B, T], or [B, S]
         query_mask = getattr(query, "_keras_mask", None)
         value_mask = getattr(value, "_keras_mask", None)
         key_mask = getattr(key, "_keras_mask", None)    
@@ -91,6 +93,8 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         if use_causal_mask:
             # the shape of causal mask is [1, T, S]
             mask = self._compute_causal_mask(query, value)
+            # to (B, T, S)
+            mask = tf.tile(mask, [tf.shape(query)[0], 1, 1])
             # update auto_mask
             auto_mask = mask if auto_mask is None else auto_mask & mask
         
@@ -98,6 +102,8 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
             # merge attention mask and auto_mask to shape [B, T, S]
             attention_mask = auto_mask if attention_mask is None else tf.cast(attention_mask, tf.bool) & auto_mask
 
+        # check dimensions
+        
         return attention_mask
     
     def _compute_s0(self, query, value, attention_mask):
@@ -109,7 +115,7 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
             context = tf.cumsum(value, axis=1)
         else:
             # (B, 1, H, dv)
-            context = tf.reduce_mean(value, axis=1)
+            context = tf.reduce_mean(value, axis=1, keepdims=True)
             context = tf.tile(context, [1, T, 1, 1])
         
         # (B, T, H, dv)
@@ -321,7 +327,12 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
                 tf.transpose(attentions, perm=[0,2,1,3]),
                 (-1, T, self.num_heads * self.value_dim)
                 )
-        attentions._keras_mask = query._keras_mask
+        # propagating mask
+        if self.supports_masking:
+            attentions._keras_mask = query._keras_mask
+        else:
+            attentions._keras_mask = None
+            
         attentions = self.output_projection(attentions)
         
         if return_attention_scores:
