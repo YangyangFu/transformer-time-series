@@ -364,4 +364,5 @@ if __name__ == '__main__':
     model = Informer(output_dim=out_model)
     y = model(x_enc, x_dec)
     print(y.shape)
+    print(model.summary())
     
