@@ -115,10 +115,11 @@ class EncoderLayer(tf.keras.layers.Layer):
             input_dim=output_dim, 
             output_dim=output_dim)
         
-    def call(self, x, use_causal_mask=False, training=True, **kwargs):
+    def call(self, x, training=True, **kwargs):
+        # no need to use causal mask in encoder
         # x: (batch_size, seq_len, output_dim)
         x = self.psa([x, x, x], 
-                    use_causal_mask=use_causal_mask,
+                    use_causal_mask=False,
                     training=training)
         x = self.distilling(x, training=training)
         return x
@@ -143,11 +144,11 @@ class Encoder(tf.keras.layers.Layer):
                                         factor=factor, 
                                         dropout_rate=dropout_rate) for _ in range(num_layers)]
     
-    def call(self, x, use_causal_mask=True, training=True, **kwargs):
+    def call(self, x, training=True, **kwargs):
         # x: (batch_size, seq_len, output_dim)
         
         for enc_layer in self.enc_layers:
-            x = enc_layer(x, use_causal_mask=use_causal_mask, training=training)
+            x = enc_layer(x, training=training)
             
         return x
 
@@ -237,8 +238,8 @@ class DecoderLayer(tf.keras.layers.Layer):
     def call(self, x, context, **kwargs):
         # masked self probsparse attention 
         x = self.mask_ps_attn([x, x, x])
-        # cross attention
-        x = self.cross_attn(x, context)
+        # cross attention with causal mask
+        x = self.cross_attn(x, context, use_causal_mask=True)
         return x 
                      
 class Decoder(tf.keras.layers.Layer):
@@ -268,86 +269,99 @@ class Decoder(tf.keras.layers.Layer):
         
         return x
         
+class Informer(tf.keras.Model):
+    def __init__(self, 
+                 output_dim,
+                 num_layers_encoder=4, 
+                 num_heads_encoder=16, 
+                 key_dim_encoder=32, 
+                 value_dim_encoder=32, 
+                 output_dim_encoder=512, 
+                 hidden_dim_encoder=2048, 
+                 factor_encoder=4,
+                 num_layers_decoder=2, 
+                 num_heads_decoder=8, 
+                 key_dim_decoder=64, 
+                 value_dim_decoder=64, 
+                 output_dim_decoder=512, 
+                 hidden_dim_decoder=2048, 
+                 factor_decoder=4, 
+                 dropout_rate=0.1, 
+                 **kwargs):
+        """ Informer model for time series forecasting.
 
+        Args:
+            output_dim (int): model output dimension
+            num_layers_encoder (_type_): number of encoder layers
+            num_heads_encoder (_type_): number of heads in each encoder layer
+            key_dim_encoder (_type_): key dimension in each head of encoder layer
+            value_dim_encoder (_type_): value dimension in each head of encoder layer
+            output_dim_encoder (_type_): output dimension of each encoder layer
+            hidden_dim_encoder (_type_): hidden dimension of the fully connected network in each encoder layer
+            factor_encoder (_type_): factor to determine the number of selected keys in each encoder layer
+            num_layers_decoder (_type_): number of decoder layers
+            num_heads_decoder (_type_): number of heads in each decoder layer
+            key_dim_decoder (_type_): key dimension in each head of decoder layer
+            value_dim_decoder (_type_): value dimension in each head of decoder layer
+            output_dim_decoder (_type_): output dimension of each decoder layer
+            hidden_dim_decoder (_type_): hidden dimension of the fully connected network in each decoder layer
+            factor_decoder (_type_): factor to determine the number of selected keys in each decoder layer
+            dropout_rate (float, optional): _description_. Defaults to 0.1.
+        
+        """
+        
+        
+        super().__init__(**kwargs)
+        
+        # (B, S, D)
+        self.encoder = Encoder(
+            num_layers=num_layers_encoder,
+            num_heads=num_heads_encoder,
+            key_dim=key_dim_encoder,
+            value_dim=value_dim_encoder,
+            output_dim=output_dim_encoder,
+            hidden_dim=hidden_dim_encoder,
+            factor=factor_encoder,
+            dropout_rate=dropout_rate)
+        
+        # (B, T, D)
+        self.decoder = Decoder(
+            num_layers=num_layers_decoder,
+            num_heads=num_heads_decoder,
+            key_dim=key_dim_decoder,
+            value_dim=value_dim_decoder,
+            output_dim=output_dim_decoder,
+            hidden_dim=hidden_dim_decoder,
+            factor=factor_decoder,
+            dropout_rate=dropout_rate)
+        # (B, T, O)
+        self.final_fc = tf.keras.layers.Dense(units=output_dim)
+    
+    def call(self, x_enc, x_dec):
+        
+        enc_out = self.encoder(x_enc)
+        dec_out = self.decoder(x_dec, enc_out)
+        dec_out = self.final_fc(dec_out)
+        
+        return dec_out
+    
 if __name__ == '__main__':
     
-    d_model = 512
+    out_model = 72
+    embed_dim = 512
     source_seq_len = 64
     target_seq_len = 128
-    num_heads = 16
-    num_encoder_layers = 4
     
-    x = tf.random.normal((32, source_seq_len, d_model))
+    x_enc = tf.random.normal((32, source_seq_len, embed_dim))
+    x_dec = tf.random.normal((32, target_seq_len, embed_dim))
     padding_mask = tf.random.uniform((32, source_seq_len), minval=0, maxval=2, dtype=tf.int32)
     padding_mask = tf.cast(padding_mask, tf.bool)
     use_mask = False
     if use_mask:
-        x._keras_mask = padding_mask
+        x_enc._keras_mask = padding_mask
     
     # attention block
-    psa = ProbSpareAttentionBlock(num_heads=num_heads,
-                                key_dim = d_model//num_heads, 
-                                value_dim = d_model//num_heads,
-                                output_dim=d_model,
-                                hidden_dim=2048)
+    model = Informer(output_dim=out_model)
+    y = model(x_enc, x_dec)
+    print(y.shape)
     
-    y = psa([x, x, x], 
-            use_causal_mask=True)
-    attn_weights = psa.last_attn_weights
-    print(y.shape, attn_weights.shape)
-    
-    # distilling block
-    dis = DistillingBlock(input_dim=d_model, output_dim=d_model)
-    y = dis(y)
-    print("shape after distilling", y.shape)
-
-    # encoder layer
-    enc_layer = EncoderLayer(num_heads=num_heads,
-                             key_dim=d_model//num_heads,
-                             value_dim=d_model//num_heads,
-                             output_dim=d_model,
-                             hidden_dim=2048)
-    y = enc_layer(x, use_causal_mask=True)
-    print("shape after encoder layer", y.shape)
-
-    # encoder
-    encoder = Encoder(num_layers=num_encoder_layers,
-                    num_heads=num_heads,
-                    key_dim=d_model//num_heads,
-                    value_dim=d_model//num_heads,
-                    output_dim=d_model,
-                    hidden_dim=2048)
-    y_enc = encoder(x, use_causal_mask=False)
-    print("shape after encoder with 4 layers:", y.shape)
-    
-    
-    # decoder layer
-    num_heads_dec = 8
-    
-    y = tf.random.normal((32, target_seq_len, d_model))
-    
-    # cross attention block
-    cross_attn = CrossAttentionBlock(num_heads=num_heads_dec,
-                                    key_dim=d_model//num_heads_dec,
-                                    value_dim=d_model//num_heads_dec,
-                                    hidden_dim=2048,
-                                    output_dim=d_model)
-    y_out = cross_attn(y, y_enc)
-    print("shape after cross attention", y_out.shape)
-    
-    # decoder layer
-    dec_layer = DecoderLayer(num_heads=num_heads_dec,
-                             key_dim=d_model//num_heads_dec,
-                             value_dim=d_model//num_heads_dec,
-                             output_dim=d_model,
-                             hidden_dim=2048)
-    y_out = dec_layer(y, y_enc)                          
-    print("shape after one decoder layer:", y_out.shape)
-    
-    # decoder
-    dec = Decoder(num_layers=2,
-                num_heads=num_heads_dec,
-                key_dim=d_model//num_heads_dec,
-                value_dim=d_model//num_heads_dec,
-                output_dim=d_model,
-                hidden_dim=2048)
