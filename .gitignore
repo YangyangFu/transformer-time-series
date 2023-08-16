@@ -162,3 +162,5 @@ cython_debug/
 #
 *.csv
 *.v2
+*.DS_Store
+*__MACOSX
