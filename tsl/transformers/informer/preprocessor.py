@@ -127,43 +127,61 @@ class DataLoader():
         
         return inputs, labels
     
-    def make_dataset(self, data):
-        ds = tf.keras.utils.timeseries_dataset_from_array(
-            data=data,
-            targets = None,
-            sequence_length=self.window_size,
-            sequence_stride=1,
-            shuffle=False,
-            batch_size=self.batch_size
-        )
-        
-        ds = ds.map(self._split_window)
+    def generator(self, start_idx, end_idx, shuffle=True, seed=0):
+        """_summary_
 
+        Args:
+            data (_type_): _description_
+            shuffle (bool, optional): _description_. Defaults to True.
+
+        Yields:
+            _type_: _description_
+        """
+        # create a dataset of indices
+        start = start_idx
+        end = end_idx - self.window_size + 1
+        idx = tf.data.Dataset.range(start, end)
+
+        # shuffle indices
+        if shuffle:
+            idx = idx.shuffle(
+                buffer_size=(end-start),
+                seed=seed)
+        
+        # batch indices
+        idx = idx.batch(self.batch_size)
+        
+        # map indices to data at each batch    
+        # map covariate data
+        for batch_idx in idx:
+            data_batch = np.stack(
+                [self.data_cov[i:i+self.window_size, :] for i in batch_idx.numpy()],
+                axis = 0
+            )
+            inputs, labels = self._split_window(data_batch)
+            
+            yield inputs, labels
+
+    def generate_dataset(self, mode="train", shuffle=False, seed=0):
+        # get range [start, end)
+        if mode == "train":
+            start_idx, end_idx = self.train_range[0], self.train_range[1]
+        elif mode == "validation":
+            start_idx, end_idx = self.val_range[0], self.val_range[1]
+        elif mode == "test":
+            start_idx, end_idx = self.test_range[0], self.test_range[1]
+        else:
+            raise ValueError("mode must be one of 'train', 'validation', 'test'")
+        
+        ds = tf.data.Dataset.from_generator(
+            self.generator, 
+            args=[start_idx, end_idx, shuffle, seed], 
+            output_types=(tf.float32, tf.float32))
+        ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
+        
         return ds 
     
-    def generate_train(self):
-        
-        train_data = self.data_cov[self.train_range[0]:self.train_range[1], :]
-        train_ds = self.make_dataset(train_data)
-        
-        return train_ds
-    
-    def generate_val(self):
-            
-        val_data = self.data_cov[self.val_range[0]:self.val_range[1], :]
-        val_ds = self.make_dataset(val_data)
-        
-        return val_ds
-    
-    
-    def generate_test(self):
-                
-        test_data = self.data_cov[self.test_range[0]:self.test_range[1], :]
-        test_ds = self.make_dataset(test_data)
-        
-        return test_ds
-    
-    
+
 if __name__=="__main__":
     
     data = pd.read_csv('ETTh1.csv', index_col=0, parse_dates=True)
@@ -184,16 +202,16 @@ if __name__=="__main__":
                             train_range=(0, 10),
                             hist_len=3,
                             pred_len=2,
-                            batch_size=2
+                            batch_size=5
                             )
-    train_dataset = dataloader.train()
     
-    for inputs, labels in train_dataset.take(1):
-        print(inputs.shape)
-        print(labels.shape)
+    train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
+    for batch in train_ds:
+        inputs, labels = batch
         print(inputs)
         print(labels)
-        break
+        
+        
         
     
 
