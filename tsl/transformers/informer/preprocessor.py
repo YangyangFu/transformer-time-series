@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf 
 import numpy as np 
+import time_features
 
 """ Assume cvs data format with the first column as datetime column"""
 
@@ -25,9 +26,8 @@ class DataLoader():
                  batch_size=32,
                  freq='H',
                  normalize=True,
-                 max_epochs=10,
-                 holiday=True,
-                 permute=True,
+                 use_holiday_distance=False,
+                 use_which_holiday=True,
                  ):
         """_summary_
 
@@ -59,11 +59,15 @@ class DataLoader():
         self.hist_len = hist_len
         self.pred_len = pred_len
         self.batch_size = batch_size
+        self.use_holiday_distance = use_holiday_distance
+        self.use_which_holiday = use_which_holiday
         
         self.window_size = self.hist_len + self.pred_len
         # read data
         self.data_df = pd.read_csv(data_path, index_col=0, parse_dates=True)
-
+        # resample to frequency
+        self.data_df = self.data_df.resample(freq).mean()
+        
         # time series covariate columns
         if ts_cov_cols is None or len(ts_cov_cols) == 0:
             ts_cov_cols = target_cols
@@ -81,32 +85,37 @@ class DataLoader():
             self.data_num_cov = self.data_df[self.num_cov_cols].values
             self.n_num_cov = len(self.num_cov_cols)
             
-        # TODO: add time features
         # time features dataframe
+        print("Generating time features.................")
+        self.time_features = time_features.TimeCovariates(
+            self.data_df.index, 
+            use_holiday_distance=use_holiday_distance,
+            use_which_holiday=use_which_holiday,
+            normalized=False,
+        ).get_covariates()
+        self.time_features_cols = self.time_features.columns
         
         # normalize numerical columns
         if normalize:
             self._normalize_numeric_data()
         
         # concatenate all covariate features
-        self.data_cov = self.data_num_cov
-        self.data_cov_cols = self.num_cov_cols
-        if self.data_cat_cov is not None:
-            self.data_cov = np.concatenate((self.data_cat_cov, self.data_num_cov), axis=1)
-            self.data_cov_cols = self.cat_cov_cols + self.num_cov_cols
+        #self.data_cov = self.data_num_cov
+        #self.data_cov_cols = self.num_cov_cols
+        #if self.data_cat_cov is not None:
+        #    self.data_cov = np.concatenate((self.data_cat_cov, self.data_num_cov), axis=1)
+        #    self.data_cov_cols = self.cat_cov_cols + self.num_cov_cols
         
         # get target info
-        self.target_cols_index = [self.data_cov_cols.index(col) for col in target_cols]
+        self.target_cols_index = [self.num_cov_cols.index(col) for col in target_cols]
         
-        
-           
     def _normalize_numeric_data(self):
         self.scaler = StandardScaler()
         train_num_col = self.data_num_cov[self.train_range[0]:self.train_range[1],:]
         self.scaler = self.scaler.fit(train_num_col)
         self.data_num_cov = self.scaler.transform(self.data_num_cov)
     
-    def _split_window(self, window):
+    def _split_window(self, window, extract_target=True):
         """_summary_
 
         Args:
@@ -115,17 +124,18 @@ class DataLoader():
         Returns:
             _type_: _description_
         """
-        inputs = window[:, :self.hist_len, :]
+        history = window[:, :self.hist_len, :]
         # cannot indexing like this
         #labels = window[:, self.hist_len:, self.target_cols_index]
-        labels = window[:, self.hist_len:, :]
-        if self.target_cols is not None:
-            labels = tf.stack(
-                [labels[:,:, ind] for ind in self.target_cols_index],
+        future = window[:, self.hist_len:, :]
+        
+        if extract_target and self.target_cols is not None:
+            future = tf.stack(
+                [future[:,:, ind] for ind in self.target_cols_index],
                 axis=-1
             )
         
-        return inputs, labels
+        return history, future
     
     def generator(self, start_idx, end_idx, shuffle=True, seed=0):
         """_summary_
@@ -154,13 +164,16 @@ class DataLoader():
         # map indices to data at each batch    
         # map covariate data
         for batch_idx in idx:
-            data_batch = np.stack(
-                [self.data_cov[i:i+self.window_size, :] for i in batch_idx.numpy()],
-                axis = 0
-            )
-            inputs, labels = self._split_window(data_batch)
+            num_batch, cat_batch, time_batch = self._gather_all_features(batch_idx)
+            num_cov_enc, targets = self._split_window(num_batch, extract_target=True)
             
-            yield inputs, labels
+            cat_cov_enc = None
+            if cat_batch is not None:
+                cat_cov_enc, _ = self._split_window(cat_batch, extract_target=False)
+            
+            time_features_enc, time_features_dec = self._split_window(time_batch, extract_target=False)
+            
+            yield num_cov_enc, cat_cov_enc, time_features_enc, time_features_dec, targets
 
     def generate_dataset(self, mode="train", shuffle=False, seed=0):
         # get range [start, end)
@@ -176,11 +189,33 @@ class DataLoader():
         ds = tf.data.Dataset.from_generator(
             self.generator, 
             args=[start_idx, end_idx, shuffle, seed], 
-            output_types=(tf.float32, tf.float32))
+            output_types=(tf.float32, tf.float32, tf.float32, tf.float32, tf.float32))
         ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
         
         return ds 
     
+    def _gather_all_features(self, batch_idx):
+        """ Gahter all features from given time series data 
+        """
+        # features: numeric covariates, categorical covariates, time features  
+        # batch for numeric features
+        numeric_batch = np.stack(
+                [self.data_num_cov[i:i+self.window_size, :] for i in batch_idx.numpy()],
+                axis = 0
+            )
+        # batch for categorical features
+        cat_batch = None
+        if self.data_cat_cov is not None:
+            cat_batch = np.stack(
+                [self.data_cat_cov[i:i+self.window_size, :] for i in batch_idx.numpy()],
+                axis = 0
+            )
+        # batch for time features
+        time_batch = np.stack(
+                [self.time_features.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
+                axis = 0
+            )
+        return numeric_batch, cat_batch, time_batch
 
 if __name__=="__main__":
     
@@ -204,12 +239,14 @@ if __name__=="__main__":
                             pred_len=2,
                             batch_size=5
                             )
-    
+    print(dataloader.time_features.head())
     train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
     for batch in train_ds:
-        inputs, labels = batch
-        print(inputs)
-        print(labels)
+        num_cov_enc, cat_cov_enc, time_features_enc, time_features_dec, targets = batch
+        print(cat_cov_enc)
+        print(num_cov_enc.shape, time_features_enc.shape, time_features_dec.shape, targets.shape)
+
+    
         
         
         
