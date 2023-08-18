@@ -3,11 +3,18 @@
 import tensorflow as tf
 import numpy as np 
 
-class PositionalEncoder(tf.keras.layers.Layer):
-    def __init__(self, ):
-        super().__init__()
-
-    def get_angles(self, pos, i, embedding_dim):
+class PositionalEmbedding(tf.keras.layers.Layer):
+    def __init__(self, 
+                 embedding_dim=64,
+                 max_timescale=10000, 
+                 seq_axis=1,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.embedding_dim = embedding_dim
+        self.max_timesclae = max_timescale
+        self._seq_axis = seq_axis
+        
+    def get_angles(self, pos, i):
         """ Get the angles for the positional encoding
 
         Args:
@@ -18,7 +25,7 @@ class PositionalEncoder(tf.keras.layers.Layer):
         Returns:
             angles: matrix of shape (pos, embedding_dim)
         """
-        angles = 1 / np.power(10000, (2 * (i // 2)) / embedding_dim)
+        angles = 1 / np.power(self.max_timesclae, (2 * (i // 2)) / self.embedding_dim)
         return pos * angles
     
     def call(self, inputs):
@@ -30,54 +37,16 @@ class PositionalEncoder(tf.keras.layers.Layer):
         Returns:
             output: positional encoding of shape (batch_size, seq_len, embedding_dim)
         """
-        seq_len = tf.shape(inputs)[1]
-        embedding_dim = tf.shape(inputs)[2]
+        seq_len = tf.shape(inputs)[self._seq_axis]
         angles = self.get_angles(
             np.arange(seq_len, dtype=np.float32)[:, np.newaxis],
-            np.arange(embedding_dim, dtype=np.float32)[np.newaxis, :],
-            embedding_dim
+            np.arange(self.embedding_dim, dtype=np.float32)[np.newaxis, :],
+            self.embedding_dim
         )
         angles[:, 0::2] = np.sin(angles[:, 0::2])
         angles[:, 1::2] = np.cos(angles[:, 1::2])
         pos_encoding = angles[np.newaxis, ...]
         return pos_encoding[:, :seq_len, :]
-
-class PositionalEmbedding(tf.keras.layers.Layer):
-    """ Embedding + Positional Encoding
-
-    Args:
-        inputs: input tensor of shape (batch_size, seq_len)
-    """
-    
-    def __init__(self, vocab_size, embedding_dim, dropout_rate=0.1):
-        super().__init__()
-        self.embedding_dim = embedding_dim
-        # mask_zero=True to support variable length sequences using masking
-        # padding mask is added in the encoder
-        # Tensorflow will propagate the mask through the layers automatically
-        self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim, mask_zero=True)
-        self.pos_encoding = PositionalEncoder()
-        # drop
-        self.dropout = tf.keras.layers.Dropout(dropout_rate)
-    
-    # this is needed for keras to automatically propagate the mask
-    # compute_mask() is called by keras to generate mask, and default generation is propagating
-    def compute_mask(self, *args, **kwargs):
-        # computer padding mask: mask all the 0s in the input
-        return self.embedding.compute_mask(*args, **kwargs)
-    
-    def call(self, inputs):
-
-        # embedding: (B, seq, embedding_dim)
-        x = self.embedding(inputs)
-        # scale the embedding by sqrt(embedding_dim)
-        x *= tf.math.sqrt(tf.cast(self.embedding_dim, tf.float32))
-        # add positional embedding: (1, seq, embedding_dim)
-        x += self.pos_encoding(x)
-        # pass the encoded embedding through a dropout layer
-        x = self.dropout(x)
-        
-        return x 
 
 class TemporalEmbedding(tf.keras.layers.Layer):
     def __init__(self, embedding_dim, freq='H', use_holiday=False):
@@ -131,7 +100,39 @@ class TemporalEmbedding(tf.keras.layers.Layer):
         
         return x
 
-
+class CategoricalEmbedding(tf.keras.layers.Layer):
+    
+    """ Embedding for categorical features
+    - concatenate the embeddings of all categorical features
+    - output after a linear layer
+    """
+    def __init__(self, 
+                 num_embedding, 
+                 embedding_size, 
+                 embedding_dim,
+                 output_dim,
+                 dropout_rate=0.1,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.num_embedding = num_embedding
+        self.embedding_size = [embedding_size] if num_embedding == 1 else embedding_size
+        self.embedding_dim = embedding_dim
+                
+        self.embedding = [
+            tf.keras.layers.Embedding(embedding_size[i], embedding_dim) for i in range(self.num_embedding)
+        ]
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+        self.linear = tf.keras.layers.Dense(output_dim)
+        
+    def call(self, inputs):
+        # inputs: (batch_size, seq_len, num_embedding)
+        x = tf.concat([
+            self.embedding[i](inputs[:,:,i]) for i in range(self.num_embedding)
+        ], axis=-1)
+        x = self.linear(x)
+        
+        return x
+        
 if __name__ == "__main__":
     from dataloader import DataLoader
     
@@ -148,8 +149,18 @@ if __name__ == "__main__":
                                 shuffle=False)
     embedding_dim = 64
     
-    time_emb = TemporalEmbedding(embedding_dim=embedding_dim, freq='H', use_holiday=True)
+    time_emb = TemporalEmbedding(embedding_dim=embedding_dim, 
+                                 freq='H', 
+                                 use_holiday=True)
+    cat_emb = CategoricalEmbedding(num_embedding=2,
+                                embedding_size=[2, 3],
+                                embedding_dim=embedding_dim,
+                                output_dim=16)
     for batch in train:
         num_covs, cat_covs, time_enc, time_dec, target = batch
         time_enc_out = time_emb(time_enc)
         print(time_enc_out.shape)
+        # fake categorical features
+        cat_covs = tf.random.uniform(shape=(6, 3, 2), minval=0, maxval=2, dtype=tf.int32)
+        cat_enc_out = cat_emb(cat_covs)
+        print(cat_enc_out.shape)

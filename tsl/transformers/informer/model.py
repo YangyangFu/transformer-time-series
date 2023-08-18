@@ -2,7 +2,7 @@ import tensorflow as tf
 
 from multihead_attention import MultiHeadAttention
 from multihead_probsparse_attention import MultiHeadProbSparseAttention
-from preprocessor import TemporalEmbedding, PositionalEmbedding
+from preprocessor import TemporalEmbedding, PositionalEmbedding, CategoricalEmbedding
 
 """ Should not pass padding mask to the attention layer because the sequence length is not fixed.
 """
@@ -270,31 +270,58 @@ class Decoder(tf.keras.layers.Layer):
         
         return x
 
-class InputEmbedding(tf.keras.layers.Layer):
+class EncoderInputEmbedding(tf.keras.layers.Layer):
     def __init__(self, 
                  seq_len,
                  embedding_dim,
+                 num_cat_cov=None,
+                 cat_cov_embedding_size=None,
+                 cat_cov_embedding_dim=None,
                  dropout_rate=0.1,
                  **kwargs):
         super().__init__(**kwargs)
-        # TODO: need update positional embedding to consider only positional embedding
-        self.pos_embedding = PositionalEmbedding(vocab_size = seq_len, embedding_dim=embedding_dim)
+        
+        # preprocessor for numeric covariate features
+        # conv1d treats the second last dim as time dimension, and the last dim as channel dimension
+        self.num_cov_embedding = tf.keras.layers.Conv1D(filters=embedding_dim, 
+                                                        kernel_size=3,
+                                                        padding='same', 
+                                                        strides=1)
+        # preporcessfor for categorical covariate features
+        if num_cat_cov is not None:
+            assert len(cat_cov_embedding_size) == num_cat_cov
+            self.cat_cov_embedding = CategoricalEmbedding(
+                num_embedding=num_cat_cov, 
+                embedding_size = cat_cov_embedding_size, 
+                embedding_dim = cat_cov_embedding_dim,
+                output_dim = embedding_dim,
+                dropout_rate=dropout_rate,)
+        # embedding for time features
         self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq="H", use_holiday=True)
+        # sequence relative position embedding
+        self.pos_embedding = PositionalEmbedding(embedding_dim=embedding_dim)
+        # add and dropout
         self.add = tf.keras.layers.Add()
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
         
     def call(self, inputs, **kwargs):
-        # inputs: (batch_size, seq_len, embedding_dim)
-        num_cov_enc, cat_cov_enc, time_enc, time_dec, _ = inputs
-        # TODO: what should be passed to pos_embedding?
-        x1 = self.pos_embedding(num_cov_enc)
-        x2 = self.time_embedding(time_enc)
-        x = self.add([x1, x2])
+        # inputs
+        # num_cov_enc: (batch_size, seq_len, num_num_cov)
+        # cat_cov_enc: (batch_size, seq_len, num_cat_cov)
+        # time_enc: (batch_size, seq_len, num_time_features)
+        num_cov_enc, cat_cov_enc, time_enc = inputs
+        
+        num_cov = self.num_cov_embedding(num_cov_enc)
+        if hasattr(self, 'cat_cov_embedding'):
+            cat_cov = self.cat_cov_embedding(cat_cov_enc)
+        
+        pos = self.pos_embedding(num_cov_enc)
+        time = self.time_embedding(time_enc)
+        x = self.add([num_cov, cat_cov, pos, time])
         x = self.dropout(x)
         
+        # (batch_size, seq_len, embedding_dim)
         return x
-        
-    
         
 class Informer(tf.keras.Model):
     def __init__(self, 

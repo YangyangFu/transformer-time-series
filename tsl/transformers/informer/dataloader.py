@@ -245,14 +245,3 @@ if __name__=="__main__":
         num_cov_enc, cat_cov_enc, time_features_enc, time_features_dec, targets = batch
         print(cat_cov_enc)
         print(num_cov_enc.shape, time_features_enc.shape, time_features_dec.shape, targets.shape)
-
-    
-        
-        
-        
-    
-
-    
-                                                               
-                                                           
-    
