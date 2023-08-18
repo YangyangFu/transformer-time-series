@@ -22,6 +22,7 @@ class DataLoader():
                  val_range=None,
                  test_range=None,
                  hist_len=24,
+                 token_len=4,
                  pred_len=4,
                  batch_size=32,
                  freq='H',
@@ -56,8 +57,9 @@ class DataLoader():
         self.num_cov_cols = num_cov_cols
         self.val_range = val_range
         self.test_range = test_range
-        self.hist_len = hist_len
-        self.pred_len = pred_len
+        self.hist_len = hist_len # historical length used for encoder
+        self.token_len = min(token_len, hist_len) # token length (previous history) used for decoder
+        self.pred_len = pred_len # prediction length used for decoder
         self.batch_size = batch_size
         self.use_holiday_distance = use_holiday_distance
         self.use_which_holiday = use_which_holiday
@@ -124,10 +126,10 @@ class DataLoader():
         Returns:
             _type_: _description_
         """
+        # history window for encoder
         history = window[:, :self.hist_len, :]
-        # cannot indexing like this
-        #labels = window[:, self.hist_len:, self.target_cols_index]
-        future = window[:, self.hist_len:, :]
+        # future window for decoder, including token length and prediction length
+        future = window[:, -(self.token_len+self.pred_len):, :]
         
         if extract_target and self.target_cols is not None:
             future = tf.stack(
