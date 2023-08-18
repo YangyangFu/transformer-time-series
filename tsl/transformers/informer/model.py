@@ -182,7 +182,7 @@ class CrossAttentionBlock(tf.keras.layers.Layer):
         self.conv1d_2 = tf.keras.layers.Conv1D(filters=output_dim, kernel_size=1, strides=1)
         self.activation = tf.keras.layers.Activation('elu')
         
-    def call(self, x, context, use_causal_mask=True, training=True, **kwargs):
+    def call(self, x, context, use_causal_mask=True, training=True):
         # x: (B, T, D)
         # context: (B, S, D)
         x_new, attn_weights = self.mha(query = x,
@@ -272,7 +272,6 @@ class Decoder(tf.keras.layers.Layer):
 
 class EncoderInputEmbedding(tf.keras.layers.Layer):
     def __init__(self, 
-                 seq_len,
                  embedding_dim,
                  num_cat_cov=None,
                  cat_cov_embedding_size=None,
@@ -288,7 +287,7 @@ class EncoderInputEmbedding(tf.keras.layers.Layer):
                                                         padding='same', 
                                                         strides=1)
         # preporcessfor for categorical covariate features
-        if num_cat_cov is not None:
+        if num_cat_cov is not None or num_cat_cov > 0:
             assert len(cat_cov_embedding_size) == num_cat_cov
             self.cat_cov_embedding = CategoricalEmbedding(
                 num_embedding=num_cat_cov, 
@@ -312,8 +311,7 @@ class EncoderInputEmbedding(tf.keras.layers.Layer):
         num_cov_enc, cat_cov_enc, time_enc = inputs
         
         num_cov = self.num_cov_embedding(num_cov_enc)
-        if hasattr(self, 'cat_cov_embedding'):
-            cat_cov = self.cat_cov_embedding(cat_cov_enc)
+        cat_cov = self.cat_cov_embedding(cat_cov_enc) if hasattr(self, 'cat_cov_embedding') else 0.
         
         pos = self.pos_embedding(num_cov_enc)
         time = self.time_embedding(time_enc)
@@ -322,10 +320,45 @@ class EncoderInputEmbedding(tf.keras.layers.Layer):
         
         # (batch_size, seq_len, embedding_dim)
         return x
+
+class DecoderInputEmbedding(tf.keras.layers.Layer):
+    """ Decoder input embedding
+    
+        Assume target(s) are numeric values
+        
+    """
+    def __init__(self, embedding_dim, dropout_rate=0.1, **kwargs):
+        
+        super().__init__(**kwargs)
+
+        #self.supports_masking = True
+        #(B, Lt+Ly, D)
+        self.token_embedding = tf.keras.layers.Conv1D(filters=embedding_dim,kernel_size=3, padding='same', strides=1)
+        #
+        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq="H", use_holiday=True)
+        self.pos_embedding = PositionalEmbedding(embedding_dim=embedding_dim)
+        self.add = tf.keras.layers.Add()
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+        
+    def call(self, inputs):
+        # inputs: token + target
+        # time_dec: (batch_size, seq_len, num_time_features)
+        # token_dec: (batch_size, seq_len, num_targets)
+        time_dec, token_dec = inputs
+        
+        token = self.token_embedding(token_dec)
+        time = self.time_embedding(time_dec)
+        pos = self.pos_embedding(token_dec)
+        
+        x = self.add([token, time, pos])
+        x = self.dropout(x)
+        
+        return x
         
 class Informer(tf.keras.Model):
     def __init__(self, 
                  output_dim,
+                 pred_len,
                  num_layers_encoder=4, 
                  num_heads_encoder=16, 
                  key_dim_encoder=32, 
@@ -340,6 +373,9 @@ class Informer(tf.keras.Model):
                  output_dim_decoder=512, 
                  hidden_dim_decoder=2048, 
                  factor_decoder=4, 
+                 num_cat_cov=0,
+                 cat_cov_embedding_size=[],
+                 cat_cov_embedding_dim=16,
                  dropout_rate=0.1, 
                  **kwargs):
         """ Informer model for time series forecasting.
@@ -366,7 +402,17 @@ class Informer(tf.keras.Model):
         
         
         super().__init__(**kwargs)
+        self.pred_len = pred_len
         
+        # encoder input
+        # (B, S, D)
+        self.encoder_input_embedding = EncoderInputEmbedding(
+            embedding_dim=output_dim_encoder,
+            num_cat_cov=num_cat_cov,
+            cat_cov_embedding_size=cat_cov_embedding_size,
+            cat_cov_embedding_dim=cat_cov_embedding_dim,
+            dropout_rate=dropout_rate)
+                                                             
         # (B, S, D)
         self.encoder = Encoder(
             num_layers=num_layers_encoder,
@@ -376,6 +422,11 @@ class Informer(tf.keras.Model):
             output_dim=output_dim_encoder,
             hidden_dim=hidden_dim_encoder,
             factor=factor_encoder,
+            dropout_rate=dropout_rate)
+        
+        # decoder input
+        self.decoder_input_embedding = DecoderInputEmbedding(
+            embedding_dim=output_dim_decoder,
             dropout_rate=dropout_rate)
         
         # (B, T, D)
@@ -392,12 +443,14 @@ class Informer(tf.keras.Model):
         self.final_fc = tf.keras.layers.Dense(units=output_dim)
     
     def call(self, x_enc, x_dec):
+        enc_in = self.encoder_input_embedding(x_enc)
+        enc_out = self.encoder(enc_in)
         
-        enc_out = self.encoder(x_enc)
-        dec_out = self.decoder(x_dec, enc_out)
+        dec_in = self.decoder_input_embedding(x_dec)
+        dec_out = self.decoder(dec_in, enc_out)
         dec_out = self.final_fc(dec_out)
         
-        return dec_out
+        return dec_out[:, -self.pred_len:, :]
     
 if __name__ == '__main__':
     
