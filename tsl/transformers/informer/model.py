@@ -2,6 +2,7 @@ import tensorflow as tf
 
 from multihead_attention import MultiHeadAttention
 from multihead_probsparse_attention import MultiHeadProbSparseAttention
+from preprocessor import TemporalEmbedding, PositionalEmbedding
 
 """ Should not pass padding mask to the attention layer because the sequence length is not fixed.
 """
@@ -268,6 +269,32 @@ class Decoder(tf.keras.layers.Layer):
             x = dec_layer(x, context)
         
         return x
+
+class InputEmbedding(tf.keras.layers.Layer):
+    def __init__(self, 
+                 seq_len,
+                 embedding_dim,
+                 dropout_rate=0.1,
+                 **kwargs):
+        super().__init__(**kwargs)
+        # TODO: need update positional embedding to consider only positional embedding
+        self.pos_embedding = PositionalEmbedding(vocab_size = seq_len, embedding_dim=embedding_dim)
+        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq="H", use_holiday=True)
+        self.add = tf.keras.layers.Add()
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+        
+    def call(self, inputs, **kwargs):
+        # inputs: (batch_size, seq_len, embedding_dim)
+        num_cov_enc, cat_cov_enc, time_enc, time_dec, _ = inputs
+        # TODO: what should be passed to pos_embedding?
+        x1 = self.pos_embedding(num_cov_enc)
+        x2 = self.time_embedding(time_enc)
+        x = self.add([x1, x2])
+        x = self.dropout(x)
+        
+        return x
+        
+    
         
 class Informer(tf.keras.Model):
     def __init__(self, 

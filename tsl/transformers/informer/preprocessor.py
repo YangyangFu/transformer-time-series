@@ -80,9 +80,9 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         return x 
 
 class TemporalEmbedding(tf.keras.layers.Layer):
-    def __init__(self, d_model, freq='H', use_holiday=False):
+    def __init__(self, embedding_dim, freq='H', use_holiday=False):
         super().__init__()
-        self.d_model = d_model
+        self.embedding_dim = embedding_dim
         self.freq = freq
         self.use_holiday = use_holiday
         
@@ -97,14 +97,14 @@ class TemporalEmbedding(tf.keras.layers.Layer):
         
         # embedding layers
         if freq=="t":
-            self.moh_embedding = tf.keras.layers.Embedding(minute_size, self.d_model)
-        self.hod_embedding = tf.keras.layers.Embedding(hour_size, self.d_model)
-        self.dom_embedding = tf.keras.layers.Embedding(day_size, self.d_model)
-        self.dow_embedding = tf.keras.layers.Embedding(weekday_size, self.d_model)
-        self.moy_embedding = tf.keras.layers.Embedding(month_size, self.d_model)
-        self.woy_embedding = tf.keras.layers.Embedding(week_size, self.d_model)
+            self.moh_embedding = tf.keras.layers.Embedding(minute_size, self.embedding_dim)
+        self.hod_embedding = tf.keras.layers.Embedding(hour_size, self.embedding_dim)
+        self.dom_embedding = tf.keras.layers.Embedding(day_size, self.embedding_dim)
+        self.dow_embedding = tf.keras.layers.Embedding(weekday_size, self.embedding_dim)
+        self.moy_embedding = tf.keras.layers.Embedding(month_size, self.embedding_dim)
+        self.woy_embedding = tf.keras.layers.Embedding(week_size, self.embedding_dim)
         if self.use_holiday:
-            self.holiday_embedding = tf.keras.layers.Embedding(holiday_size, self.d_model)
+            self.holiday_embedding = tf.keras.layers.Embedding(holiday_size, self.embedding_dim)
         
     def call(self, time_features):
         """ Call the layer
@@ -113,7 +113,7 @@ class TemporalEmbedding(tf.keras.layers.Layer):
             time_features: input tensor of shape (batch_size, seq_len, num_features)
 
         Returns:
-            output: temporal encoding of shape (batch_size, seq_len, d_model)
+            output: temporal encoding of shape (batch_size, seq_len, embedding_dim)
         """
         # get the embedding for each time feature
         
@@ -146,9 +146,9 @@ if __name__ == "__main__":
 
     train = ds.generate_dataset(mode="train", 
                                 shuffle=False)
-    d_model = 64
+    embedding_dim = 64
     
-    time_emb = TemporalEmbedding(d_model=d_model, freq='H', use_holiday=True)
+    time_emb = TemporalEmbedding(embedding_dim=embedding_dim, freq='H', use_holiday=True)
     for batch in train:
         num_covs, cat_covs, time_enc, time_dec, target = batch
         time_enc_out = time_emb(time_enc)
