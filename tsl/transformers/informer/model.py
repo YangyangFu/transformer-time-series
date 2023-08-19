@@ -273,9 +273,11 @@ class Decoder(tf.keras.layers.Layer):
 class EncoderInputEmbedding(tf.keras.layers.Layer):
     def __init__(self, 
                  embedding_dim,
-                 num_cat_cov=None,
-                 cat_cov_embedding_size=None,
-                 cat_cov_embedding_dim=None,
+                 num_cat_cov=0,
+                 cat_cov_embedding_size=[],
+                 cat_cov_embedding_dim=16,
+                 use_holiday=True,
+                 freq='H',
                  dropout_rate=0.1,
                  **kwargs):
         super().__init__(**kwargs)
@@ -287,33 +289,34 @@ class EncoderInputEmbedding(tf.keras.layers.Layer):
                                                         padding='same', 
                                                         strides=1)
         # preporcessfor for categorical covariate features
-        if num_cat_cov is not None or num_cat_cov > 0:
+        if num_cat_cov > 0:
             assert len(cat_cov_embedding_size) == num_cat_cov
             self.cat_cov_embedding = CategoricalEmbedding(
                 num_embedding=num_cat_cov, 
                 embedding_size = cat_cov_embedding_size, 
                 embedding_dim = cat_cov_embedding_dim,
-                output_dim = embedding_dim,
-                dropout_rate=dropout_rate,)
+                output_dim = embedding_dim)
         # embedding for time features
-        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq="H", use_holiday=True)
+        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq=freq, use_holiday=use_holiday)
         # sequence relative position embedding
         self.pos_embedding = PositionalEmbedding(embedding_dim=embedding_dim)
         # add and dropout
         self.add = tf.keras.layers.Add()
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
         
-    def call(self, inputs, **kwargs):
+    def call(self, inputs):
         # inputs
         # num_cov_enc: (batch_size, seq_len, num_num_cov)
         # cat_cov_enc: (batch_size, seq_len, num_cat_cov)
         # time_enc: (batch_size, seq_len, num_time_features)
         num_cov_enc, cat_cov_enc, time_enc = inputs
         
-        num_cov = self.num_cov_embedding(num_cov_enc)
-        cat_cov = self.cat_cov_embedding(cat_cov_enc) if hasattr(self, 'cat_cov_embedding') else 0.
+        batch_size = tf.shape(num_cov_enc)[0]
         
+        num_cov = self.num_cov_embedding(num_cov_enc)
+        cat_cov = self.cat_cov_embedding(cat_cov_enc) if hasattr(self, 'cat_cov_embedding') else tf.zeros_like(num_cov)
         pos = self.pos_embedding(num_cov_enc)
+        pos = tf.tile(pos, [batch_size, 1, 1])
         time = self.time_embedding(time_enc)
         x = self.add([num_cov, cat_cov, pos, time])
         x = self.dropout(x)
@@ -327,7 +330,7 @@ class DecoderInputEmbedding(tf.keras.layers.Layer):
         Assume target(s) are numeric values
         
     """
-    def __init__(self, embedding_dim, dropout_rate=0.1, **kwargs):
+    def __init__(self, embedding_dim, freq="H", use_holiday=True, dropout_rate=0.1, **kwargs):
         
         super().__init__(**kwargs)
 
@@ -335,20 +338,22 @@ class DecoderInputEmbedding(tf.keras.layers.Layer):
         #(B, Lt+Ly, D)
         self.token_embedding = tf.keras.layers.Conv1D(filters=embedding_dim,kernel_size=3, padding='same', strides=1)
         #
-        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq="H", use_holiday=True)
+        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq=freq, use_holiday=use_holiday)
         self.pos_embedding = PositionalEmbedding(embedding_dim=embedding_dim)
         self.add = tf.keras.layers.Add()
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
         
     def call(self, inputs):
-        # inputs: token + target
+        # inputs: cat(token,zeros)
         # time_dec: (batch_size, seq_len, num_time_features)
         # token_dec: (batch_size, seq_len, num_targets)
         time_dec, token_dec = inputs
+        batch_size = tf.shape(time_dec)[0]
         
         token = self.token_embedding(token_dec)
         time = self.time_embedding(time_dec)
         pos = self.pos_embedding(token_dec)
+        pos = tf.tile(pos, [batch_size, 1, 1])
         
         x = self.add([token, time, pos])
         x = self.dropout(x)
@@ -376,31 +381,37 @@ class Informer(tf.keras.Model):
                  num_cat_cov=0,
                  cat_cov_embedding_size=[],
                  cat_cov_embedding_dim=16,
+                 freq='H',
+                 use_holiday=True,
                  dropout_rate=0.1, 
                  **kwargs):
         """ Informer model for time series forecasting.
 
         Args:
-            output_dim (int): model output dimension
-            num_layers_encoder (_type_): number of encoder layers
-            num_heads_encoder (_type_): number of heads in each encoder layer
-            key_dim_encoder (_type_): key dimension in each head of encoder layer
-            value_dim_encoder (_type_): value dimension in each head of encoder layer
-            output_dim_encoder (_type_): output dimension of each encoder layer
-            hidden_dim_encoder (_type_): hidden dimension of the fully connected network in each encoder layer
-            factor_encoder (_type_): factor to determine the number of selected keys in each encoder layer
-            num_layers_decoder (_type_): number of decoder layers
-            num_heads_decoder (_type_): number of heads in each decoder layer
-            key_dim_decoder (_type_): key dimension in each head of decoder layer
-            value_dim_decoder (_type_): value dimension in each head of decoder layer
-            output_dim_decoder (_type_): output dimension of each decoder layer
-            hidden_dim_decoder (_type_): hidden dimension of the fully connected network in each decoder layer
-            factor_decoder (_type_): factor to determine the number of selected keys in each decoder layer
-            dropout_rate (float, optional): _description_. Defaults to 0.1.
+            output_dim (int): output dimension
+            pred_len (int): prediction length
+            num_layers_encoder (int, optional): number of encoder layers. Defaults to 4.
+            num_heads_encoder (int, optional): number of heads in encoder. Defaults to 16.
+            key_dim_encoder (int, optional): key dimension in encoder. Defaults to 32.
+            value_dim_encoder (int, optional): value dimension in encoder. Defaults to 32.
+            output_dim_encoder (int, optional): output dimension in encoder. Defaults to 512.
+            hidden_dim_encoder (int, optional): hidden dimension in encoder. Defaults to 2048.
+            factor_encoder (int, optional): factor in encoder. Defaults to 4.
+            num_layers_decoder (int, optional): number of decoder layers. Defaults to 2.
+            num_heads_decoder (int, optional): number of heads in decoder. Defaults to 8.
+            key_dim_decoder (int, optional): key dimension in decoder. Defaults to 64.
+            value_dim_decoder (int, optional): value dimension in decoder. Defaults to 64.
+            output_dim_decoder (int, optional): output dimension in decoder. Defaults to 512.
+            hidden_dim_decoder (int, optional): hidden dimension in decoder. Defaults to 2048.
+            factor_decoder (int, optional): factor in decoder. Defaults to 4.
+            num_cat_cov (int, optional): number of categorical covariates. Defaults to 0.
+            cat_cov_embedding_size (list, optional): embedding size for each categorical covariate. Defaults to [].
+            cat_cov_embedding_dim (int, optional): embedding dimension for categorical covariates. Defaults to 16.
+            freq (str, optional): frequency of time series. Defaults to 'H'.
+            use_holiday (bool, optional): whether to use holiday embedding. Defaults to True.
+            dropout_rate (float, optional): dropout rate. Defaults to 0.1.
         
         """
-        
-        
         super().__init__(**kwargs)
         self.pred_len = pred_len
         
@@ -411,6 +422,8 @@ class Informer(tf.keras.Model):
             num_cat_cov=num_cat_cov,
             cat_cov_embedding_size=cat_cov_embedding_size,
             cat_cov_embedding_dim=cat_cov_embedding_dim,
+            freq=freq,
+            use_holiday=use_holiday,
             dropout_rate=dropout_rate)
                                                              
         # (B, S, D)
@@ -427,6 +440,8 @@ class Informer(tf.keras.Model):
         # decoder input
         self.decoder_input_embedding = DecoderInputEmbedding(
             embedding_dim=output_dim_decoder,
+            freq=freq,
+            use_holiday=use_holiday,
             dropout_rate=dropout_rate)
         
         # (B, T, D)
@@ -454,22 +469,58 @@ class Informer(tf.keras.Model):
     
 if __name__ == '__main__':
     
-    out_model = 72
+    from dataloader import DataLoader
+    
     embed_dim = 512
     source_seq_len = 64
     target_seq_len = 128
-    
-    x_enc = tf.random.normal((32, source_seq_len, embed_dim))
-    x_dec = tf.random.normal((32, target_seq_len, embed_dim))
-    padding_mask = tf.random.uniform((32, source_seq_len), minval=0, maxval=2, dtype=tf.int32)
-    padding_mask = tf.cast(padding_mask, tf.bool)
-    use_mask = False
-    if use_mask:
-        x_enc._keras_mask = padding_mask
+    pred_len = 96
+    n_num_covs = 7
+    n_targets = 1
     
     # attention block
-    model = Informer(output_dim=out_model)
+    model = Informer(output_dim=n_targets, 
+                    pred_len=pred_len,
+                    num_layers_encoder=4, 
+                    num_heads_encoder=16, 
+                    key_dim_encoder=32, 
+                    value_dim_encoder=32, 
+                    output_dim_encoder=512, 
+                    hidden_dim_encoder=2048, 
+                    factor_encoder=4,
+                    num_layers_decoder=2, 
+                    num_heads_decoder=8, 
+                    key_dim_decoder=64, 
+                    value_dim_decoder=64, 
+                    output_dim_decoder=512, 
+                    hidden_dim_decoder=2048, 
+                    factor_decoder=4, 
+                    num_cat_cov=0,
+                    cat_cov_embedding_size=[],
+                    cat_cov_embedding_dim=16,
+                    freq='H',
+                    use_holiday=True,
+                    dropout_rate=0.1,)
+    
+    # take a batch   
+    num_covs = tf.random.uniform(shape=(32, source_seq_len, n_num_covs))
+    cat_covs = None 
+    time_enc = tf.random.uniform(shape=(32, source_seq_len, 7))
+    
+    # zero for target 
+    token_dec = tf.random.uniform(shape=(32, target_seq_len-pred_len, n_targets))
+    zeros = tf.zeros(shape=(32, pred_len, n_targets))
+    target_dec = tf.concat([token_dec, zeros], axis=1)
+    time_dec = tf.random.uniform(shape=(32, target_seq_len, 7))
+        
+    # feed model
+    x_enc = [num_covs, cat_covs, time_enc]
+    x_dec = [time_dec, target_dec]
     y = model(x_enc, x_dec)
     print(y.shape)
     print(model.summary())
+    
+
+    
+
     

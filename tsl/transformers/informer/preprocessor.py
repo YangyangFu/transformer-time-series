@@ -40,8 +40,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         seq_len = tf.shape(inputs)[self._seq_axis]
         angles = self.get_angles(
             np.arange(seq_len, dtype=np.float32)[:, np.newaxis],
-            np.arange(self.embedding_dim, dtype=np.float32)[np.newaxis, :],
-            self.embedding_dim
+            np.arange(self.embedding_dim, dtype=np.float32)[np.newaxis, :]
         )
         angles[:, 0::2] = np.sin(angles[:, 0::2])
         angles[:, 1::2] = np.cos(angles[:, 1::2])
@@ -59,8 +58,8 @@ class TemporalEmbedding(tf.keras.layers.Layer):
         minute_size = 4
         hour_size = 24
         weekday_size = 7
-        day_size = 31
-        month_size = 12
+        day_size = 32
+        month_size = 13
         week_size = 53
         holiday_size = 19 # 18 holidays + 1 for no holiday
         
@@ -111,24 +110,23 @@ class CategoricalEmbedding(tf.keras.layers.Layer):
                  embedding_size, 
                  embedding_dim,
                  output_dim,
-                 dropout_rate=0.1,
                  **kwargs):
         super().__init__(**kwargs)
         self.num_embedding = num_embedding
+        # need check that embedding_size should be a list
         self.embedding_size = [embedding_size] if num_embedding == 1 else embedding_size
         self.embedding_dim = embedding_dim
                 
         self.embedding = [
             tf.keras.layers.Embedding(embedding_size[i], embedding_dim) for i in range(self.num_embedding)
         ]
-        self.dropout = tf.keras.layers.Dropout(dropout_rate)
         self.linear = tf.keras.layers.Dense(output_dim)
         
     def call(self, inputs):
         # inputs: (batch_size, seq_len, num_embedding)
         x = tf.concat([
-            self.embedding[i](inputs[:,:,i]) for i in range(self.num_embedding)
-        ], axis=-1)
+                self.embedding[i](inputs[:,:,i]) for i in range(self.num_embedding)
+            ], axis=-1)
         x = self.linear(x)
         
         return x

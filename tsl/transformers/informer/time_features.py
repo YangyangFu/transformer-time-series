@@ -259,7 +259,6 @@ class TimeCovariates(object):
       all_covs.append(hol_covs)
       columns += ["hol"]
     
-    print(hol_covs.shape, woy.shape, moh.shape)
     return pd.DataFrame(
         data=np.vstack(all_covs).transpose(),
         columns=columns,
