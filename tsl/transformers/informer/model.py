@@ -182,7 +182,7 @@ class CrossAttentionBlock(tf.keras.layers.Layer):
         self.conv1d_2 = tf.keras.layers.Conv1D(filters=output_dim, kernel_size=1, strides=1)
         self.activation = tf.keras.layers.Activation('elu')
         
-    def call(self, x, context, use_causal_mask=True, training=True):
+    def call(self, x, context, use_causal_mask=False, training=True):
         # x: (B, T, D)
         # context: (B, S, D)
         x_new, attn_weights = self.mha(query = x,
@@ -240,7 +240,7 @@ class DecoderLayer(tf.keras.layers.Layer):
         # masked self probsparse attention 
         x = self.mask_ps_attn([x, x, x])
         # cross attention with causal mask
-        x = self.cross_attn(x, context, use_causal_mask=True)
+        x = self.cross_attn(x, context, use_causal_mask=False)
         return x 
                      
 class Decoder(tf.keras.layers.Layer):
@@ -519,6 +519,13 @@ if __name__ == '__main__':
     y = model(x_enc, x_dec)
     print(y.shape)
     print(model.summary())
+    
+    # check cross attention
+    print(model.decoder.dec_layers[0].cross_attn.last_attn_weights.shape)
+    
+    # check prob sparse attention
+    print(model.decoder.dec_layers[0].mask_ps_attn.last_attn_weights[0,0,:,:])
+    
     
 
     
