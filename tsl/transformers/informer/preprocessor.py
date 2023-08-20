@@ -25,7 +25,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         Returns:
             angles: matrix of shape (pos, embedding_dim)
         """
-        angles = 1 / np.power(self.max_timesclae, (2 * (i // 2)) / self.embedding_dim)
+        angles = 1 / tf.math.power(self.max_timesclae, (2 * (i // 2)) / self.embedding_dim)
         return pos * angles
     
     def call(self, inputs):
@@ -42,8 +42,10 @@ class PositionalEmbedding(tf.keras.layers.Layer):
             np.arange(seq_len, dtype=np.float32)[:, np.newaxis],
             np.arange(self.embedding_dim, dtype=np.float32)[np.newaxis, :]
         )
-        angles[:, 0::2] = np.sin(angles[:, 0::2])
-        angles[:, 1::2] = np.cos(angles[:, 1::2])
+        angles_numpy = angles.numpy()
+        angles_numpy[:, 0::2] = np.sin(angles[:, 0::2])
+        angles_numpy[:, 1::2] = np.cos(angles[:, 1::2])
+        angles = tf.convert_to_tensor(angles_numpy)
         pos_encoding = angles[np.newaxis, ...]
         return pos_encoding[:, :seq_len, :]
 
