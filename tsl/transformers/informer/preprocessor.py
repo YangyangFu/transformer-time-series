@@ -1,53 +1,40 @@
 # Embedding layer, whose outputs are passed to the encoder and decoder
 
 import tensorflow as tf
-import numpy as np 
 
 class PositionalEmbedding(tf.keras.layers.Layer):
     def __init__(self, 
                  embedding_dim=64,
+                 max_seq_len = 5000,
                  max_timescale=10000, 
                  seq_axis=1,
                  **kwargs):
         super().__init__(**kwargs)
         self.embedding_dim = embedding_dim
-        self.max_timesclae = max_timescale
+        self.max_seq_len = max_seq_len
+        self.max_timescale = max_timescale
         self._seq_axis = seq_axis
         
-    def get_angles(self, pos, i):
-        """ Get the angles for the positional encoding
-
-        Args:
-            pos: column vector containing the positions
-            i: row vector containing the dimension span
-            embedding_dim: encoding size
-
-        Returns:
-            angles: matrix of shape (pos, embedding_dim)
-        """
-        angles = 1 / tf.math.power(self.max_timesclae, (2 * (i // 2)) / self.embedding_dim)
-        return pos * angles
+    def get_angles(self, position, i):
+        # position: (max_seq_len, 1)
+        # i: (1, embedding_dim)
+        angle_rates = 1 / tf.pow(self.max_timescale, (2 * (i // 2)) / tf.cast(self.embedding_dim, tf.float32))
+        
+        # (max_seq_len, embedding_dim)
+        return position * angle_rates
     
     def call(self, inputs):
-        """ Call the layer
-
-        Args:
-            inputs: input tensor of shape (batch_size, seq_len, embedding_dim)
-
-        Returns:
-            output: positional encoding of shape (batch_size, seq_len, embedding_dim)
-        """
         seq_len = tf.shape(inputs)[self._seq_axis]
-        angles = self.get_angles(
-            np.arange(seq_len, dtype=np.float32)[:, np.newaxis],
-            np.arange(self.embedding_dim, dtype=np.float32)[np.newaxis, :]
-        )
-        angles_numpy = angles.numpy()
-        angles_numpy[:, 0::2] = np.sin(angles[:, 0::2])
-        angles_numpy[:, 1::2] = np.cos(angles[:, 1::2])
-        angles = tf.convert_to_tensor(angles_numpy)
-        pos_encoding = angles[np.newaxis, ...]
-        return pos_encoding[:, :seq_len, :]
+        
+        position = tf.cast(tf.range(self.max_seq_len)[:, tf.newaxis], tf.float32)
+        angle_rads = self.get_angles(position, tf.range(self.embedding_dim, dtype=tf.float32)[tf.newaxis, :])
+        
+        angle_rads_sin = tf.sin(angle_rads[:, 0::2])
+        angle_rads_cos = tf.cos(angle_rads[:, 1::2])
+        pos_encoding = tf.concat([angle_rads_sin, angle_rads_cos], axis=1)
+        
+        # (seq_len, embedding_dim)
+        return pos_encoding[:seq_len, :]
 
 class TemporalEmbedding(tf.keras.layers.Layer):
     def __init__(self, embedding_dim, freq='H', use_holiday=False):
@@ -148,6 +135,8 @@ if __name__ == "__main__":
     train = ds.generate_dataset(mode="train", 
                                 shuffle=False)
     embedding_dim = 64
+    
+    pos_emb = PositionalEmbedding(embedding_dim=embedding_dim)
     
     time_emb = TemporalEmbedding(embedding_dim=embedding_dim, 
                                  freq='H', 

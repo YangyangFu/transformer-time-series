@@ -315,8 +315,10 @@ class EncoderInputEmbedding(tf.keras.layers.Layer):
         
         num_cov = self.num_cov_embedding(num_cov_enc)
         cat_cov = self.cat_cov_embedding(cat_cov_enc) if hasattr(self, 'cat_cov_embedding') else tf.zeros_like(num_cov)
+        # (seq_len, embedding_dim)
         pos = self.pos_embedding(num_cov_enc)
-        pos = tf.tile(pos, [batch_size, 1, 1])
+        # (batch_size, seq_len, embedding_dim)
+        pos = tf.tile(tf.expand_dims(pos, axis=0), [batch_size, 1, 1])
         time = self.time_embedding(time_enc)
         x = self.add([num_cov, cat_cov, pos, time])
         x = self.dropout(x)
@@ -352,8 +354,10 @@ class DecoderInputEmbedding(tf.keras.layers.Layer):
         
         token = self.token_embedding(token_dec)
         time = self.time_embedding(time_dec)
+        # (seq_len, embedding_dim)
         pos = self.pos_embedding(token_dec)
-        pos = tf.tile(pos, [batch_size, 1, 1])
+        # (batch_size, seq_len, embedding_dim)
+        pos = tf.tile(tf.expand_dims(pos, axis=0), [batch_size, 1, 1])
         
         x = self.add([token, time, pos])
         x = self.dropout(x)
