@@ -18,6 +18,8 @@
 Extract time covariates from datetime.
 """
 
+""" This is a modified version of the original file from Google Research."""
+
 import numpy as np
 import pandas as pd
 from pandas.tseries.holiday import EasterMonday
