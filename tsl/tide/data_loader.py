@@ -24,10 +24,10 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
-import time_features
 
+from tsl.tide.time_features import TimeCovariates
 
-class TimeSeriesdata(object):
+class DataLoader(object):
   """Data loader class."""
 
   def __init__(
@@ -97,7 +97,7 @@ class TimeSeriesdata(object):
             freq=freq,
         )
     )
-    self.time_df = time_features.TimeCovariates(
+    self.time_df = TimeCovariates(
         date_index, holiday=holiday
     ).get_covariates()
     self.hist_len = hist_len

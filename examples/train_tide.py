@@ -30,8 +30,8 @@ import tensorflow as tf
 from tensorflow import keras
 from tqdm import tqdm
 
-import data_loader
-from tsl import TIDE
+from tsl.tide import DataLoader
+from tsl.tide import TIDE
 
 EPS = 1e-07
 FLAGS = flags.FLAGS
@@ -80,37 +80,37 @@ flags.DEFINE_integer('gpu', 0, 'index of gpu to be used.')
 DATA_DICT = {
     'ettm2': {
         'boundaries': [34560, 46080, 57600],
-        'data_path': './datasets/ETT-small/ETTm2.csv',
+        'data_path': '../datasets/ETT-small/ETTm2.csv',
         'freq': '15min',
     },
     'ettm1': {
         'boundaries': [34560, 46080, 57600],
-        'data_path': './datasets/ETT-small/ETTm1.csv',
+        'data_path': '../datasets/ETT-small/ETTm1.csv',
         'freq': '15min',
     },
     'etth2': {
         'boundaries': [8640, 11520, 14400],
-        'data_path': './datasets/ETT-small/ETTh2.csv',
+        'data_path': '../datasets/ETT-small/ETTh2.csv',
         'freq': 'H',
     },
     'etth1': {
         'boundaries': [8640, 11520, 14400],
-        'data_path': './datasets/ETT-small/ETTh1.csv',
+        'data_path': '../datasets/ETT-small/ETTh1.csv',
         'freq': 'H',
     },
     'elec': {
         'boundaries': [18413, 21044, 26304],
-        'data_path': './datasets/electricity/electricity.csv',
+        'data_path': '../datasets/electricity/electricity.csv',
         'freq': 'H',
     },
     'traffic': {
         'boundaries': [12280, 14036, 17544],
-        'data_path': './datasets/traffic/traffic.csv',
+        'data_path': '../datasets/traffic/traffic.csv',
         'freq': 'H',
     },
     'weather': {
         'boundaries': [36887, 42157, 52696],
-        'data_path': './datasets/weather/weather.csv',
+        'data_path': '../datasets/weather/weather.csv',
         'freq': '10min',
     },
 }
@@ -226,7 +226,7 @@ def training():
     num_cov_cols = None
     cat_cov_cols = None
   permute = FLAGS.permute
-  dtl = data_loader.TimeSeriesdata(
+  dtl = DataLoader(
       data_path=data_path,
       datetime_col=FLAGS.datetime_col,
       num_cov_cols=num_cov_cols,
