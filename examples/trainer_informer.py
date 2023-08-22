@@ -3,14 +3,6 @@ import os
 import random 
 import numpy as np
 
-# get data path
-file_path = os.path.dirname(os.path.abspath(__file__))
-root_path = os.path.dirname(file_path)
-
-# add library to pythonpath
-os.environ['PYTHONPATH'] = os.path.join(root_path) + ":" + os.environ.get('PYTHONPATH', '')
-print(os.environ['PYTHONPATH'])
-import tsl
 from tsl.transformers.informer import DataLoader
 from tsl.transformers.informer import Informer
 
@@ -39,7 +31,12 @@ n_targets = 1
 
 MAX_EPOCHS = 10
 
-data_path = os.path.join(root_path, "datasets", "EET-small", "ETTh1.csv")
+# get data path
+file_path = os.path.dirname(os.path.abspath(__file__))
+root_path = os.path.dirname(file_path)
+data_path = os.path.join(root_path, "datasets", "ETT-small", "ETTh1.csv")
+
+# create dataloader
 dataloader = DataLoader(data_path=data_path,
                     target_cols=['OT'],
                     num_cov_cols=['HUFL','HULL','MUFL','MULL','LUFL','LULL','OT'],
@@ -55,7 +52,7 @@ train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
 val_ds = dataloader.generate_dataset(mode="validation", shuffle=False, seed=1)
 test_ds = dataloader.generate_dataset(mode="test", shuffle=False, seed=1)
 
-# attention block
+# create informer model
 model = Informer(output_dim=n_targets, 
                 pred_len=pred_len,
                 num_layers_encoder=4, 

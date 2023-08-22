@@ -13,22 +13,4 @@
 # limitations under the License.
 
 #!/bin/bash
-for horizon in 96
-  do
-    python -m train_tide \
-    --transform=false \
-    --layer_norm=true \
-    --holiday=false \
-    --dropout_rate=0.0 \
-    --batch_size=512 \
-    --hidden_size=512 \
-    --num_layers=1 \
-    --hist_len=720 \
-    --pred_len=$horizon \
-    --dataset=weather \
-    --decoder_output_dim=8 \
-    --final_decoder_hidden=16 \
-    --num_split=1 \
-    --learning_rate=0.00003012706619800982 \
-    --min_num_epochs=20
-  done
+export PYTHONPATH=$PYTHONPATH:$PWD
