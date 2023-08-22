@@ -1,8 +1,8 @@
 import tensorflow as tf 
 
-from multihead_attention import MultiHeadAttention
-from multihead_probsparse_attention import MultiHeadProbSparseAttention
-from preprocessor import TemporalEmbedding, PositionalEmbedding, CategoricalEmbedding
+from .multihead_attention import MultiHeadAttention
+from .multihead_probsparse_attention import MultiHeadProbSparseAttention
+from .preprocessor import TemporalEmbedding, PositionalEmbedding, CategoricalEmbedding
 
 """ Should not pass padding mask to the attention layer because the sequence length is not fixed.
 """

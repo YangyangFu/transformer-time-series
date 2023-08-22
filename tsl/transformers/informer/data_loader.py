@@ -5,8 +5,9 @@
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf 
-import numpy as np 
-import time_features
+import numpy as np
+ 
+from .time_features import TimeCovariates
 
 """ Assume cvs data format with the first column as datetime column"""
 
@@ -89,7 +90,7 @@ class DataLoader():
             
         # time features dataframe
         print("Generating time features.................")
-        self.time_features = time_features.TimeCovariates(
+        self.time_features = TimeCovariates(
             self.data_df.index, 
             use_holiday_distance=use_holiday_distance,
             use_which_holiday=use_which_holiday,
