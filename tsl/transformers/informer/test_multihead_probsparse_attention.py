@@ -30,6 +30,7 @@ emb = tf.keras.layers.Embedding(input_dim=10, output_dim=12, mask_zero=mask_zero
 
 # create multihead attention layer
 mha = MultiHeadProbSparseAttention(num_heads=6,
+                            factor=2,
                             key_dim=2,
                             value_dim=2,
                             output_dim=12)

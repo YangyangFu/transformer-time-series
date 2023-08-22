@@ -1,4 +1,4 @@
-from dataloader import DataLoader
+from tsl.transformers.informer.data_loader import DataLoader
 from model import Informer
 import tensorflow as tf
 

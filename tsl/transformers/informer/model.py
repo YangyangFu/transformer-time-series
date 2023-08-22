@@ -472,9 +472,7 @@ class Informer(tf.keras.Model):
         return dec_out[:, -self.pred_len:, :]
     
 if __name__ == '__main__':
-    
-    from dataloader import DataLoader
-    
+        
     embed_dim = 512
     source_seq_len = 64
     target_seq_len = 128

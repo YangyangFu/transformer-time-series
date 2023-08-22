@@ -25,7 +25,6 @@ indx = [[0, 1],
 g1 = a[:, [[0],[1],[2],[3]], indx]
 print(g1)
 print(g1.shape)
-print(ssss)
 
 # Example dimensions
 B, T, S, H, D, k = 2, 3, 4, 2, 2, 2

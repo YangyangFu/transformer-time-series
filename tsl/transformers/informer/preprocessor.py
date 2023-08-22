@@ -18,7 +18,8 @@ class PositionalEmbedding(tf.keras.layers.Layer):
     def get_angles(self, position, i):
         # position: (max_seq_len, 1)
         # i: (1, embedding_dim)
-        angle_rates = 1 / tf.pow(self.max_timescale, (2 * (i // 2)) / tf.cast(self.embedding_dim, tf.float32))
+        angle_rates = 1.0 / tf.math.pow(tf.cast(self.max_timescale, tf.float32), 
+                                        (2 * (i // 2)) / tf.cast(self.embedding_dim, tf.float32))
         
         # (max_seq_len, embedding_dim)
         return position * angle_rates
@@ -27,7 +28,8 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         seq_len = tf.shape(inputs)[self._seq_axis]
         
         position = tf.cast(tf.range(self.max_seq_len)[:, tf.newaxis], tf.float32)
-        angle_rads = self.get_angles(position, tf.range(self.embedding_dim, dtype=tf.float32)[tf.newaxis, :])
+        increment = tf.cast(tf.range(self.embedding_dim)[tf.newaxis, :], tf.float32)
+        angle_rads = self.get_angles(position, increment)
         
         angle_rads_sin = tf.sin(angle_rads[:, 0::2])
         angle_rads_cos = tf.cos(angle_rads[:, 1::2])
@@ -121,7 +123,7 @@ class CategoricalEmbedding(tf.keras.layers.Layer):
         return x
         
 if __name__ == "__main__":
-    from dataloader import DataLoader
+    from tsl.transformers.informer.data_loader import DataLoader
     
     ds = DataLoader(data_path='ETTh1.csv',
                     target_cols=['OT'],
@@ -147,8 +149,15 @@ if __name__ == "__main__":
                                 output_dim=16)
     for batch in train:
         num_covs, cat_covs, time_enc, time_dec, target = batch
+        
+        # position embedding
+        pos_emb_out = pos_emb(num_covs)
+        print(pos_emb_out.shape)
+        print(pos_emb_out)
+        # time embedding
         time_enc_out = time_emb(time_enc)
         print(time_enc_out.shape)
+        
         # fake categorical features
         cat_covs = tf.random.uniform(shape=(6, 3, 2), minval=0, maxval=2, dtype=tf.int32)
         cat_enc_out = cat_emb(cat_covs)

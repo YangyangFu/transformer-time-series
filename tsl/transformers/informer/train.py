@@ -1,6 +1,25 @@
-from dataloader import DataLoader
-from model import Informer
 import tensorflow as tf
+import os 
+import random 
+import numpy as np
+
+from tsl.transformers.informer.data_loader import DataLoader
+from model import Informer
+
+def set_seed(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    tf.experimental.numpy.random.seed(seed)
+    tf.random.set_seed(seed)
+    # When running on the CuDNN backend, two further options must be set
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    print(f"Random seed set as {seed}")
+
+set_seed(42)
 
 embed_dim = 512
 source_seq_len = 64
@@ -69,38 +88,41 @@ def train_step(x, y):
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
     # update metrics
     for metric in train_metrics:
-            metric.update_state(target_dec[:, pred_len:, :], y_pred)
+            metric.update_state(target_dec[:, -pred_len:, :], y_pred)
     return loss
 
 # validation step
 @tf.function
 def val_step(x, y):
-    y_pred = model(x, training=False)
+    x_enc, x_dec = x
+    y_pred = model(x_enc, x_dec, training=False)
     loss = loss_fn(y, y_pred)
     for metric in val_metrics:
-        metric.update_state(target_dec[:, pred_len:, :], y_pred)
+        metric.update_state(target_dec[:, -pred_len:, :], y_pred)
     return loss
 
 
 # main loop
-epoch = 0
-while epoch < MAX_EPOCHS:
+for epoch in range(MAX_EPOCHS):
     # take a batch
     for batch in train_ds:
         num_covs, cat_covs, time_enc, time_dec, target_dec = batch
         
-        # zero for target 
-        token_dec = target_dec[:, :-pred_len, :]
-        zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
-        token_target_dec = tf.concat([token_dec, zeros], axis=1)
-        
-        # feed model
-        x_enc = [num_covs, cat_covs, time_enc]
-        x_dec = [time_dec, token_target_dec]
-        
-        # train step
-        loss = train_step((x_enc, x_dec), target_dec[:, pred_len:, :])
-        
+        try: 
+            # zero for target 
+            token_dec = target_dec[:, :-pred_len, :]
+            zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
+            token_target_dec = tf.concat([token_dec, zeros], axis=1)
+            
+            # feed model
+            x_enc = (num_covs, cat_covs, time_enc)
+            x_dec = (time_dec, token_target_dec)
+            
+            # train step
+            loss = train_step((x_enc, x_dec), target_dec[:, -pred_len:, :])
+            
+        except tf.errors.OutOfRangeError:
+            pass
         
     # print loss every epoch
     print(f"Epoch {epoch+1}/{MAX_EPOCHS} training loss: {loss:.4f}, MAE: {train_metrics[0].result():.4f}")
@@ -110,28 +132,31 @@ while epoch < MAX_EPOCHS:
         metric.reset_states()
     
     # run validation loop
+    # how to run validaiton loop without batching?
+    
     for val_batch in val_ds:
         num_covs, cat_covs, time_enc, time_dec, target_dec = val_batch
         
-        # zero for target 
-        token_dec = target_dec[:, :-pred_len, :]
-        zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
-        token_target_dec = tf.concat([token_dec, zeros], axis=1)
+        try:
+            # zero for target 
+            token_dec = target_dec[:, :-pred_len, :]
+            zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
+            token_target_dec = tf.concat([token_dec, zeros], axis=1)
+            
+            # feed model
+            x_enc = (num_covs, cat_covs, time_enc)
+            x_dec = (time_dec, token_target_dec)
+            
+            # calculate loss
+            loss_val = val_step((x_enc, x_dec), target_dec[:, -pred_len:, :])
         
-        # feed model
-        x_enc = [num_covs, cat_covs, time_enc]
-        x_dec = [time_dec, token_target_dec]
+        except tf.errors.OutOfRangeError:
+            pass
         
-        # calculate loss
-        loss_val = val_step((x_enc, x_dec), target_dec[:, pred_len:, :])
-    
         # print loss every epoch
-    print(f"Epoch {epoch+1}/{MAX_EPOCHS} validation loss: {loss:.4f}, MAE: {val_metrics[0].result():.4f}")
+    print(f"Epoch {epoch+1}/{MAX_EPOCHS} validation loss: {loss_val:.4f}, MAE: {val_metrics[0].result():.4f}")
     
     # reset val metrics
     for metric in val_metrics:
         metric.reset_states()
         
-    # update epoch
-    epoch += 1
-            

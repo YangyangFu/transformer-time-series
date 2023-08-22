@@ -107,8 +107,11 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         return attention_mask
     
     def _compute_s0(self, query, value, attention_mask):
-        B, S, H, dv = tf.shape(value)
-        _, T, _, _ = tf.shape(query)
+        # query: (B, T, H, dk)
+        # cannot use tf.shape() to get the shape of a tensor in eager mode
+        S = tf.shape(value)[1]
+        T = tf.shape(query)[1]
+        
         if attention_mask is not None:
             assert (S == T) # require S == T for self-attention
             # (B, S, H, dv)
@@ -128,8 +131,9 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         # index: (B, n_top, H)
         # value: (B, S, H, dv)
         # attention_mask: (B, T, S)
-        B, _, H, _ = tf.shape(context)
-        
+        B = tf.shape(context)[0]
+        H = tf.shape(context)[2]
+
         if scale:
             q_top_k = tf.multiply(q_top_k, 1.0 / tf.math.sqrt(tf.cast(self.key_dim, q_top_k.dtype)))
             
@@ -170,8 +174,10 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         # scores shape: [B, H, T, S]
         # value shape: [B, S, H, D]
         # context shape: [B, H, T, D]
-        B, T, H, _ = tf.shape(query)
-        _, S, _, _ = tf.shape(key)
+        B = tf.shape(query)[0]
+        T = tf.shape(query)[1]
+        H = tf.shape(query)[2]
+        S = tf.shape(key)[1]
         
         # (B, H, n_top, S), (B, n_top, H)
         q_top_k, top_index = self._prob_QK(query, key, sample_k, n_top)
@@ -191,23 +197,11 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         #        tf.range(H)[tf.newaxis,:, tf.newaxis],
         #        tf.transpose(top_index, perm=[0,2,1]), :] = attention
         # the above code wont work due to immutable tensor. 
-        # WORKAROUND: convert to numpy
-        # TODO: find a better way to do this. conversion between numpy and tensor is not efficient
-        context_np = context.numpy()
-        attention_np = attention.numpy()
-        context_np[np.arange(B)[:, np.newaxis, np.newaxis],
-                np.arange(H)[np.newaxis,:, np.newaxis],
-                np.transpose(top_index, axes=[0,2,1]), :] = attention_np
-        context = tf.convert_to_tensor(context_np)
+        context = self._update_at_index(context, attention, tf.transpose(top_index, perm=[0,2,1]))
         
         # fill scores with shape (B, H, T, S)
         final_scores = (tf.ones((B,H,T,S))/S).astype(scores.dtype)
-        final_scores_np = final_scores.numpy()
-        scores_np = scores.numpy()
-        final_scores_np[np.arange(B)[:, np.newaxis, np.newaxis],
-                np.arange(H)[np.newaxis,:, np.newaxis],
-                np.transpose(top_index, axes=[0,2,1]), :] = scores_np
-        final_scores = tf.convert_to_tensor(final_scores_np)
+        final_scores = self._update_at_index(final_scores, scores, tf.transpose(top_index, perm=[0,2,1]))
         final_scores._keras_mask = attention_mask
         
         return context, final_scores
@@ -218,9 +212,10 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         # key shape: [B, S, H, dk]
         # sample_k: number of samples for key
         # n_top: number of top samples for query
-        
-        B, T, H, dk = tf.shape(query)
-        _, S, _, _ = tf.shape(key)
+        B = tf.shape(query)[0]
+        T = tf.shape(query)[1]
+        H = tf.shape(query)[2]
+        S = tf.shape(key)[1]
         
         # randomly sample keys
         # (B, S, H, dk) -> (B, 1, S, H, dk)
@@ -268,7 +263,35 @@ class MultiHeadProbSparseAttention(tf.keras.layers.Layer):
         
         return qk, M_top
     
-    
+    def _update_at_index(self, context, updates, index):
+        """ Update context with given updates at index. This is to perform scatter update in tensorflow.
+            
+            context[index] = attention     
+
+        Args:
+            context (B, H, T, d): _description_
+            updates (B, H, n, d): _description_
+            index (B, H, n): _description_
+        """
+        B, H = context.shape[:2]
+
+        # Create the indices for scatter update
+        b_indices = tf.range(B)[:, tf.newaxis, tf.newaxis, tf.newaxis]
+        h_indices = tf.range(H)[tf.newaxis, :, tf.newaxis, tf.newaxis]
+
+        # Broadcast top_index to match the dimensions
+        top_expanded = index[:, :, :, tf.newaxis]
+
+        # Combine indices to form the index tensor
+        indices = tf.concat([b_indices + tf.zeros_like(top_expanded),
+                            h_indices + tf.zeros_like(top_expanded),
+                            top_expanded], axis=-1)
+
+        # Scatter update
+        updated_context = tf.tensor_scatter_nd_update(context, indices, updates)
+        
+        return updated_context
+
     def call(self, 
              inputs, 
              scale=True, 
