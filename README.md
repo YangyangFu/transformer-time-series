@@ -26,9 +26,10 @@ Assume we have two years of historical electricity price data from energy market
 - [ ] DLinear
 - [ ] Non-stationary Transformer
 - [ ] Autoformer
-- [ ] Informer
+- [x] Informer
 - [ ] Temporal Fusion Transformer
-- [ ] TiDE
+- [x] TiDE
+- [ ] PatchTST
 
 ## Notes
 1. How padding mask and causal mask work in transformer?

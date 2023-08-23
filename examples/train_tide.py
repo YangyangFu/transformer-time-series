@@ -51,7 +51,7 @@ flags.DEFINE_string(
     './results',
     'The name of the experiment dir',
 )
-flags.DEFINE_string('dataset', 'weather', 'The name of the dataset.')
+flags.DEFINE_string('dataset', 'etth1', 'The name of the dataset.')
 flags.DEFINE_string('datetime_col', 'date', 'Column having datetime.')
 flags.DEFINE_list('num_cov_cols', None, 'Column having numerical features.')
 flags.DEFINE_list('cat_cov_cols', None, 'Column having categorical features.')
