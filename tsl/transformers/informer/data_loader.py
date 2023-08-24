@@ -28,6 +28,7 @@ class DataLoader():
                  batch_size=32,
                  freq='H',
                  normalize=True,
+                 use_time_features=False,
                  use_holiday_distance=False,
                  use_which_holiday=True,
                  ):
@@ -62,6 +63,7 @@ class DataLoader():
         self.token_len = min(token_len, hist_len) # token length (previous history) used for decoder
         self.pred_len = pred_len # prediction length used for decoder
         self.batch_size = batch_size
+        self.use_time_features = use_time_features
         self.use_holiday_distance = use_holiday_distance
         self.use_which_holiday = use_which_holiday
         
@@ -90,13 +92,14 @@ class DataLoader():
             
         # time features dataframe
         print("Generating time features.................")
-        self.time_features = TimeCovariates(
-            self.data_df.index, 
-            use_holiday_distance=use_holiday_distance,
-            use_which_holiday=use_which_holiday,
-            normalized=False,
-        ).get_covariates()
-        self.time_features_cols = self.time_features.columns
+        if use_time_features:
+            self.time_features = TimeCovariates(
+                self.data_df.index, 
+                use_holiday_distance=use_holiday_distance,
+                use_which_holiday=use_which_holiday,
+                normalized=False,
+            ).get_covariates()
+            self.time_features_cols = self.time_features.columns
         
         # normalize numerical columns
         if normalize:
@@ -174,7 +177,9 @@ class DataLoader():
             if cat_batch is not None:
                 cat_cov_enc, _ = self._split_window(cat_batch, extract_target=False)
             
-            time_features_enc, time_features_dec = self._split_window(time_batch, extract_target=False)
+            time_features_enc, time_features_dec = None, None
+            if self.use_time_features:
+                time_features_enc, time_features_dec = self._split_window(time_batch, extract_target=False)
             
             yield num_cov_enc, cat_cov_enc, time_features_enc, time_features_dec, targets
 
@@ -214,10 +219,12 @@ class DataLoader():
                 axis = 0
             )
         # batch for time features
-        time_batch = np.stack(
-                [self.time_features.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
-                axis = 0
-            )
+        time_batch = None
+        if self.use_time_features:
+            time_batch = np.stack(
+                    [self.time_features.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
+                    axis = 0
+                )
         return numeric_batch, cat_batch, time_batch
 
 if __name__=="__main__":

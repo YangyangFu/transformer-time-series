@@ -202,10 +202,10 @@ class Encoder(tf.keras.layers.Layer):
         return inputs
 
 class LinearHead(tf.keras.layers.Layer):
-    def __init__(self, out_dim, target_col_index, dropout_rate=0.2, **kwargs):
+    def __init__(self, out_dim, target_cols_index, dropout_rate=0.2, **kwargs):
         super(LinearHead, self).__init__(**kwargs)
         self.out_dim = out_dim
-        self.target_col_index = target_col_index
+        self.target_cols_index = target_cols_index
         self.dropout_rate = dropout_rate
         
     def build(self, input_shape):
@@ -227,7 +227,7 @@ class LinearHead(tf.keras.layers.Layer):
         x = self.dropout(x)
         
         # get output shape
-        x = tf.gather(x, self.target_col_index, axis=1)
+        x = tf.gather(x, self.target_cols_index, axis=1)
         x = tf.transpose(x, perm=[0, 2, 1])
         
         return x
@@ -235,7 +235,7 @@ class LinearHead(tf.keras.layers.Layer):
 class PatchTST(tf.keras.Model):
     def __init__(self,
                  pred_len = 96,
-                 target_col_index = [-1], 
+                 target_cols_index = [-1], 
                  embedding_dim = 16,
                  num_layers = 3,
                  num_heads = 4,
@@ -247,7 +247,7 @@ class PatchTST(tf.keras.Model):
                  **kwargs):
         super(PatchTST, self).__init__(**kwargs)
         self.pred_len = pred_len
-        self.target_col_index = target_col_index
+        self.target_cols_index = target_cols_index
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.num_heads = num_heads
@@ -268,7 +268,8 @@ class PatchTST(tf.keras.Model):
                                ffn_hidden_dim=self.ffn_hidden_dim, 
                                dropout_rate=self.dropout_rate)
         self.linear_head = LinearHead(out_dim=self.pred_len, 
-                                      target_col_index=self.target_col_index)
+                                      target_cols_index=self.target_cols_index,
+                                      dropout_rate=0.)
     
     def call(self, inputs):
         # inputs: [batch_size, seq_len, feature_dim]
@@ -298,7 +299,7 @@ if __name__ == '__main__':
     pred_len = 96
     hist_len = 512
     num_features = 8
-    target_col_index = [6,7]
+    target_cols_index = [6,7]
     embedding_dim = 128
     num_layers = 3
     num_heads = 4
@@ -312,7 +313,7 @@ if __name__ == '__main__':
 
     # generate fake data
     x = tf.random.normal((batch_size, hist_len, num_features))
-    y = tf.random.normal((batch_size, pred_len, len(target_col_index)))
+    y = tf.random.normal((batch_size, pred_len, len(target_cols_index)))
     
     # patching
     print("shape before patching: ", x.shape)
@@ -338,7 +339,7 @@ if __name__ == '__main__':
     
     # linear head
     head = LinearHead(out_dim=pred_len,
-                      target_col_index=target_col_index)
+                      target_cols_index=target_cols_index)
     head_out = head(enc_out)
     print("shape after linear head: ", head_out.shape)
     print("shape of target: ", y.shape)
