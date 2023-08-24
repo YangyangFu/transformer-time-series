@@ -25,8 +25,47 @@ class LearnablePositionalEmbedding(tf.keras.layers.Layer):
         return self.pos_embedding    
     
 class InstanceNormalization(tf.keras.layers.Layer):
-    pass
+    """ Instance Normalization Layer (https://arxiv.org/abs/1607.08022). 
+    """
+    def __init__(self, num_features, epsilon=1e-5, learnable=False, substraction="mean", **kwargs):
+        """_summary_
 
+        Args:
+            num_features (int): number of features to normalize/denormalize
+            epsilon (float, optional): small tolerance for numerical stablity. Defaults to 1e-5.
+            learnable (bool, optional): weather the layer is learnable. If not, statistics is calculated based on the data on the fly. Defaults to False.
+            substraction (str, optional): normalization mode. Defaults to "mean".
+        """
+        super(InstanceNormalization, self).__init__()
+        self.num_features = num_features
+        self.eps = epsilon
+        self.substraction = substraction
+        self.learnable = learnable
+    
+    def _normalize(self, x):
+        # x: [batch_size, seq_len, num_features]
+        if self.substraction == "mean":
+            self._mean = tf.reduce_mean(x, axis=[1], keepdims=True)
+            self._std = tf.math.reduce_std(x, axis=[1], keepdims=True)
+            x = (x - self._mean) / (self._std + self.eps)
+        
+        return x    
+    
+    def _denormalize(self, x):
+        # x: [batch_size, seq_len, num_features]
+        if self.substraction == "mean":
+            x = x * (self._std + self.eps) + self._mean
+        
+        return x
+    
+    def call(self, x, mode="norm"):
+        if mode == "norm":
+            x = self._normalize(x)
+        elif mode == "denorm":
+            x = self._denormalize(x)
+        
+        return x
+        
 class Patching(tf.keras.layers.Layer):
     def __init__(self, patch_size, patch_strides, patch_padding, name='patch'):
         super(Patching, self).__init__(name=name)
@@ -202,15 +241,14 @@ class Encoder(tf.keras.layers.Layer):
         return inputs
 
 class LinearHead(tf.keras.layers.Layer):
-    def __init__(self, out_dim, target_cols_index, dropout_rate=0.2, **kwargs):
+    def __init__(self, out_dim, dropout_rate=0.2, **kwargs):
         super(LinearHead, self).__init__(**kwargs)
         self.out_dim = out_dim
-        self.target_cols_index = target_cols_index
         self.dropout_rate = dropout_rate
         
     def build(self, input_shape):
         # input_shape: [BxM, patch_num, d_model]
-        # output_shape: [B, M, out_dim]
+        # output_shape: [B, pred_len, M]
         self.linear = tf.keras.layers.Dense(self.out_dim)
         self.dropout = tf.keras.layers.Dropout(self.dropout_rate)
         
@@ -223,11 +261,12 @@ class LinearHead(tf.keras.layers.Layer):
         batch_size = inputs.shape[0]
         num_features = inputs.shape[1]
         x = tf.reshape(inputs, [batch_size, num_features, -1])
+        # [B, M, pred_len]
         x = self.linear(x)
         x = self.dropout(x)
         
         # get output shape
-        x = tf.gather(x, self.target_cols_index, axis=1)
+        # [B, pred_len, M]
         x = tf.transpose(x, perm=[0, 2, 1])
         
         return x
@@ -258,6 +297,7 @@ class PatchTST(tf.keras.Model):
         self.dropout_rate = dropout_rate
         
     def build(self, input_shape):
+        self.ins_norm = InstanceNormalization(num_features=input_shape[-1])
         self.patching = Patching(patch_size=self.patch_size, 
                                  patch_strides=self.patch_strides, 
                                  patch_padding=self.patch_padding)
@@ -268,11 +308,13 @@ class PatchTST(tf.keras.Model):
                                ffn_hidden_dim=self.ffn_hidden_dim, 
                                dropout_rate=self.dropout_rate)
         self.linear_head = LinearHead(out_dim=self.pred_len, 
-                                      target_cols_index=self.target_cols_index,
                                       dropout_rate=0.)
     
     def call(self, inputs):
         # inputs: [batch_size, seq_len, feature_dim]
+        # instance normalization
+        x = self.ins_norm(inputs, mode="norm")
+        
         # patching
         # [batch_size, feature_dim, patch_num, patch_size]
         x = self.patching(inputs)
@@ -289,9 +331,15 @@ class PatchTST(tf.keras.Model):
         x = tf.reshape(x, [inputs.shape[0], -1, x.shape[-2], x.shape[-1]])
         
         # linear head
-        # [batch_size, feature_dim, pred_len]
+        # [batch_size, pred_len, feature_dim]
         x = self.linear_head(x)
-
+        
+        # instance normalization
+        x = self.ins_norm(x, mode="denorm")
+        
+        # [batch_size, pred_len, num_target]
+        x = tf.gather(x, self.target_cols_index, axis=-1)
+        
         return x
     
 if __name__ == '__main__':
@@ -315,6 +363,12 @@ if __name__ == '__main__':
     x = tf.random.normal((batch_size, hist_len, num_features))
     y = tf.random.normal((batch_size, pred_len, len(target_cols_index)))
     
+    # instance normalization
+    ins_norm = InstanceNormalization(num_features=num_features)
+    ins_norm_out = ins_norm(x, mode="norm")
+    print("shape after instance normalization: ", ins_norm_out.shape)
+    denorm_out = ins_norm(ins_norm_out, mode="denorm")
+
     # patching
     print("shape before patching: ", x.shape)
     patching = Patching(patch_size=patch_size,
@@ -338,8 +392,7 @@ if __name__ == '__main__':
     print("shape after encoder: ", enc_out.shape)
     
     # linear head
-    head = LinearHead(out_dim=pred_len,
-                      target_cols_index=target_cols_index)
+    head = LinearHead(out_dim=pred_len)
     head_out = head(enc_out)
     print("shape after linear head: ", head_out.shape)
     print("shape of target: ", y.shape)
