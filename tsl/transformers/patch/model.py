@@ -282,7 +282,8 @@ class PatchTST(tf.keras.Model):
                  patch_size = 16, 
                  patch_strides = 8, 
                  patch_padding="end", 
-                 dropout_rate=0.2,  
+                 dropout_rate=0.2,
+                 linear_head_dropout_rate = 0.0,  
                  **kwargs):
         super(PatchTST, self).__init__(**kwargs)
         self.pred_len = pred_len
@@ -295,6 +296,7 @@ class PatchTST(tf.keras.Model):
         self.patch_strides = patch_strides
         self.patch_padding = patch_padding
         self.dropout_rate = dropout_rate
+        self.linear_head_dropout_rate = linear_head_dropout_rate
         
     def build(self, input_shape):
         self.ins_norm = InstanceNormalization(num_features=input_shape[-1])
@@ -308,7 +310,7 @@ class PatchTST(tf.keras.Model):
                                ffn_hidden_dim=self.ffn_hidden_dim, 
                                dropout_rate=self.dropout_rate)
         self.linear_head = LinearHead(out_dim=self.pred_len, 
-                                      dropout_rate=0.)
+                                      dropout_rate=self.linear_head_dropout_rate)
     
     def call(self, inputs):
         # inputs: [batch_size, seq_len, feature_dim]

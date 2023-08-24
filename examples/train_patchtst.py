@@ -64,14 +64,12 @@ model = PatchTST(pred_len = pred_len,
                 patch_size = 16,
                 patch_strides = 8, 
                 patch_padding = "end", 
-                dropout_rate = 0.3)
+                dropout_rate = 0.3,
+                linear_head_dropout_rate=0.0)
 
 # training settings
 loss_fn = tf.keras.losses.MeanSquaredError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-
-# TODO: add scheduler: https://github.com/yuqinie98/PatchTST/blob/204c21efe0b39603ad6e2ca640ef5896646ab1a9/PatchTST_supervised/exp/exp_main.py#L194C34-L194C34
-
 
 train_metrics = [tf.keras.metrics.MeanAbsoluteError()]
 val_metrics = [tf.keras.metrics.MeanAbsoluteError()]
@@ -179,3 +177,5 @@ print(f"Test loss MSE: {test_metrics[0].result():.4f}, MAE: {test_metrics[1].res
 # reset val metrics
 for metric in test_metrics:
     metric.reset_states()
+
+print(model.summary())
