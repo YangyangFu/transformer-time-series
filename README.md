@@ -1,4 +1,4 @@
-# transformer-time-series
+# Transformers for Time-series in Tensorflow
 A library to benchmark various transformer and nontransformer models on typical time series prediction, imputation and abnormality detection
 
 ## Tasks
