@@ -106,25 +106,16 @@ def test_step(x, y):
         metric.update_state(y, y_pred)
     
 # main loop
+MAX_EPOCHS = 100
+patience = 3
+wait = 0
+best_val_loss = np.inf
+
 for epoch in range(MAX_EPOCHS):
     # take a batch
     for batch in train_ds:
-        num_covs, cat_covs, time_enc, time_dec, target_dec = batch
-        
-        try: 
-            # zero for target 
-            token_dec = target_dec[:, :-pred_len, :]
-            zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
-            token_target_dec = tf.concat([token_dec, zeros], axis=1)
-            
-            # feed model
-            x = num_covs
-            
-            # train step
-            loss = train_step(x, target_dec[:, -pred_len:, :])
-            
-        except tf.errors.OutOfRangeError:
-            pass
+        x, cat_covs, time_enc, time_dec, target_dec = batch
+        loss = train_step(x, target_dec[:, -pred_len:, :])
         
     # print loss every epoch
     print(f"Epoch {epoch+1}/{MAX_EPOCHS} training loss: {loss:.4f}, MAE: {train_metrics[0].result():.4f}")
@@ -137,22 +128,10 @@ for epoch in range(MAX_EPOCHS):
     # how to run validaiton loop without batching?
     
     for val_batch in val_ds:
-        num_covs, cat_covs, time_enc, time_dec, target_dec = val_batch
-        
-        try:
-            # zero for target 
-            token_dec = target_dec[:, :-pred_len, :]
-            zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
-            token_target_dec = tf.concat([token_dec, zeros], axis=1)
-            
-            # feed model
-            x = num_covs
-            
-            # calculate loss
-            loss_val = val_step(x, target_dec[:, -pred_len:, :])
-        
-        except tf.errors.OutOfRangeError:
-            pass
+        x, cat_covs, time_enc, time_dec, target_dec = val_batch
+
+        # calculate loss
+        loss_val = val_step(x, target_dec[:, -pred_len:, :])
         
         # print loss every epoch
     print(f"Epoch {epoch+1}/{MAX_EPOCHS} validation loss: {loss_val:.4f}, MAE: {val_metrics[0].result():.4f}")
@@ -160,17 +139,22 @@ for epoch in range(MAX_EPOCHS):
     # reset val metrics
     for metric in val_metrics:
         metric.reset_states()
-        
+    
+    ## early stopping
+    wait += 1
+    if loss_val < best_val_loss:
+        best_val_loss = loss_val
+        wait = 0
+        model.save_weights("patchtst.h5")
+    if wait > patience:
+        print('early stopping...')
+        break
+    
+# run test loop     
 for test_batch in test_ds:
-    x, cat_covs, time_enc, time_dec, y = test_batch
-    
-    try:
-        # calculate loss
-        test_step(x, y[:, -pred_len:, :])
-    
-    except tf.errors.OutOfRangeError:
-        pass
-     
+    x, cat_covs, time_enc, time_dec, target_dec = test_batch
+    test_step(x, target_dec[:, -pred_len:, :])
+
 # print loss every epoch
 print(f"Test loss MSE: {test_metrics[0].result():.4f}, MAE: {test_metrics[1].result():.4f}")
     
