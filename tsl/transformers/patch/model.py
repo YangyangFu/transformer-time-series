@@ -27,7 +27,7 @@ class LearnablePositionalEmbedding(tf.keras.layers.Layer):
 class InstanceNormalization(tf.keras.layers.Layer):
     """ Instance Normalization Layer (https://arxiv.org/abs/1607.08022). 
     """
-    def __init__(self, num_features, epsilon=1e-5, learnable=False, substraction="mean", **kwargs):
+    def __init__(self, epsilon=1e-5, learnable=False, substraction="mean", **kwargs):
         """_summary_
 
         Args:
@@ -37,7 +37,6 @@ class InstanceNormalization(tf.keras.layers.Layer):
             substraction (str, optional): normalization mode. Defaults to "mean".
         """
         super(InstanceNormalization, self).__init__()
-        self.num_features = num_features
         self.eps = epsilon
         self.substraction = substraction
         self.learnable = learnable
@@ -299,7 +298,7 @@ class PatchTST(tf.keras.Model):
         self.linear_head_dropout_rate = linear_head_dropout_rate
         
     def build(self, input_shape):
-        self.ins_norm = InstanceNormalization(num_features=input_shape[-1])
+        self.ins_norm = InstanceNormalization()
         self.patching = Patching(patch_size=self.patch_size, 
                                  patch_strides=self.patch_strides, 
                                  patch_padding=self.patch_padding)
