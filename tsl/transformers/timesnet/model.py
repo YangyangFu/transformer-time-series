@@ -1,5 +1,5 @@
 import tensorflow as tf 
-from tsl.transformers.informer import TemporalEmbedding, PositionalEmbedding, CategoricalEmbedding
+from tsl.transformers.informer import TimeFeatureEmbedding, TemporalEmbedding, PositionalEmbedding, CategoricalEmbedding
 from tsl.transformers.patch import InstanceNormalization 
 
 class FFTPeriods(tf.keras.layers.Layer):
@@ -48,23 +48,51 @@ class InceptionBlockV1(tf.keras.layers.Layer):
         self.initializer = initializer
         
     def build(self, input_shape):
-        self.kernels = []
-        for i in range(self.num_kernels):
-            self.kernels.append(tf.keras.layers.Conv2D(filters=self.out_channels, 
-                                                       kernel_size=2*i+1, 
-                                                       padding='same',
-                                                       kernel_initializer=self.initializer))
+        # input_shape: (batch_size, d_model, seq_len, period) 
+        self.kernels = [tf.keras.layers.Conv2D(filters=self.out_channels, 
+                                                    kernel_size=2*i+1, 
+                                                    padding='same',
+                                                    kernel_initializer=self.initializer)
+                        for i in range(self.num_kernels)]
+            
     def call(self, inputs):
         # inputs: (batch_size, d_model, seq_len, period)
         # channels last
         # (batch_size, seq_len, period, d_model)
         x = tf.transpose(inputs, perm=[0,2,3,1])
+        # [(batch_size, out_channel, seq_len, period)]
+        out = []
         for i in range(self.num_kernels):
-            x = self.kernels[i](x)
-            
-        # (batch_size, d_model, seq_len, period)
-        x = tf.transpose(x, perm=[0,3,1,2])    
-        return x 
+            xo = self.kernels[i](x)
+            xo = tf.transpose(xo, perm=[0,3,1,2])
+            out.append(xo)
+    
+        #out = [tf.transpose(self.kernels[i](x), perm=[0,3,1,2]) for i in range(self.num_kernels)]
+        # stack and mean on the period axis
+        out = tf.reduce_mean(tf.stack(out, axis=-1), axis=-1)
+        
+        # (batch_size, out_chanel, seq_len, period)
+        return out 
+
+class InceptionV1(tf.keras.layers.Layer):
+    def __init__(self, d_model, out_channels, num_kernels, **kwargs):
+        super(InceptionV1, self).__init__(**kwargs)
+        self.d_model = d_model
+        self.out_channels = out_channels
+        self.num_kernels = num_kernels
+
+    def build(self, input_shape):
+        # input_shape: (batch_size, seq_len, d_model)
+        self.inp1 = InceptionBlockV1(out_channels=self.out_channels, num_kernels=self.num_kernels)
+        self.activation = tf.keras.layers.Activation('gelu')
+        self.inp2 = InceptionBlockV1(out_channels=self.d_model, num_kernels=self.num_kernels)
+
+    def call(self, inputs, *args, **kwargs):
+        # inputs: (batch_size, seq_len, d_model)
+        x = self.inp1(inputs)
+        x = self.activation(x)
+        x = self.inp2(x)
+        return x
     
 class TimesBlock(tf.keras.layers.Layer):
     def __init__(self, k, conv_hidden_dim, num_kernels, **kwargs):
@@ -78,11 +106,11 @@ class TimesBlock(tf.keras.layers.Layer):
         D = input_shape[-1]
         self.fft = FFTPeriods(k = self.k)
         self.softmax = tf.keras.layers.Softmax()
-        self.conv = [InceptionBlockV1(out_channels=self.conv_hidden_dim, num_kernels=self.num_kernels),
-                     tf.keras.layers.Activation('gelu'),
-                     InceptionBlockV1(out_channels=D, num_kernels=self.num_kernels)
-                    ] 
-    
+        self.conv = [InceptionV1(d_model = D, 
+                                out_channels=self.conv_hidden_dim, 
+                                num_kernels=self.num_kernels)
+                    for _ in range(self.k)]
+        
     def call(self, inputs):
         # inputs: (batch_size, seq_len, d_model)
         B = tf.shape(inputs)[0]
@@ -94,7 +122,8 @@ class TimesBlock(tf.keras.layers.Layer):
 
         # reshape for each period
         x_cat = []
-        for period in periods:
+        for i in range(self.k):
+            period = periods[i]
             # padding so that seq_len % period == 0
             x = inputs
             if L % period != 0:
@@ -107,9 +136,7 @@ class TimesBlock(tf.keras.layers.Layer):
             
             # conv block
             # (batch_size, d_model, seq_len // period, period)
-            for i in range(len(self.conv)):
-                x = self.conv[i](x)
-            
+            x = self.conv[i](x)
             # reshape back
             # (batch_size, seq_len, d_model)
             x = tf.reshape(tf.transpose(x, perm=[0,2,3,1]), [B, length, D])
@@ -140,10 +167,24 @@ class InputEmbedding(tf.keras.layers.Layer):
                  num_cat_cov=0,
                  cat_cov_embedding_size=[],
                  cat_cov_embedding_dim=16,
+                 time_embedding_type="time2vec",
                  use_holiday=True,
                  freq='H',
                  dropout_rate=0.1,
                  **kwargs):
+        """ Data input embedding
+        
+        Args:
+            embedding_dim (_type_): embedding dimension
+            num_cat_cov (int, optional): number of categorical variates in the features. Defaults to 0.
+            cat_cov_embedding_size (list, optional): embedding size for each categorical variates. Defaults to [].
+            cat_cov_embedding_dim (int, optional): embedding dimension for each categorical variates. Defaults to 16.
+            time_embedding_type (str, optional): embedding type for time features: "time2vec" or "temporal". Defaults to "time2vec".
+            use_holiday (bool, optional): weather to use holiday embeddings. Defaults to True.
+            freq (str, optional): _description_. Defaults to 'H'.
+            dropout_rate (float, optional): _description_. Defaults to 0.1.
+        """
+        
         super().__init__(**kwargs)
         
         # preprocessor for numeric covariate features
@@ -161,7 +202,8 @@ class InputEmbedding(tf.keras.layers.Layer):
                 embedding_dim = cat_cov_embedding_dim,
                 output_dim = embedding_dim)
         # embedding for time features
-        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq=freq, use_holiday=use_holiday)
+        self.time_embedding = TemporalEmbedding(embedding_dim=embedding_dim, freq=freq, use_holiday=use_holiday) if time_embedding_type == "temporal" else TimeFeatureEmbedding(embedding_dim=embedding_dim)
+        
         # sequence relative position embedding
         self.pos_embedding = PositionalEmbedding(embedding_dim=embedding_dim)
         # add and dropout
@@ -227,7 +269,8 @@ class TimesNet(tf.keras.Model):
                  num_kernels,
                  num_cat_cov=0, 
                  cat_cov_embedding_size=[], 
-                 cat_cov_embedding_dim=4, 
+                 cat_cov_embedding_dim=4,
+                 time_embedding_type="time2vec", 
                  use_holiday=True, 
                  freq='H', 
                  dropout_rate=0.1, 
@@ -246,6 +289,7 @@ class TimesNet(tf.keras.Model):
         self.num_cat_cov = num_cat_cov
         self.cat_cov_embedding_size = cat_cov_embedding_size
         self.cat_cov_embedding_dim = cat_cov_embedding_dim
+        self.time_embedding_type = time_embedding_type
         self.use_holiday = use_holiday
         self.freq = freq
         self.dropout_rate = dropout_rate
@@ -257,14 +301,17 @@ class TimesNet(tf.keras.Model):
         self.ins_norm = InstanceNormalization()
 
         # embedding
+        # (batch_size, seq_len, embedding_dim)
         self.input_embedding = InputEmbedding(embedding_dim=self.embedding_dim,
                                               num_cat_cov=self.num_cat_cov,
                                               cat_cov_embedding_dim=self.cat_cov_embedding_dim,
                                               cat_cov_embedding_size=self.cat_cov_embedding_size,
+                                              time_embedding_type = self.time_embedding_type,
                                               use_holiday=self.use_holiday,
                                               freq=self.freq,
                                               dropout_rate=self.dropout_rate)
         # linear prediction
+        # (batch_size, pred_len + hist_len, embedding_dim)
         self.linear = tf.keras.layers.Dense(units=self.pred_len + self.hist_len)
         
         # (batch_size, seq_len, embedding_dim)
@@ -279,49 +326,25 @@ class TimesNet(tf.keras.Model):
     
     def call(self, inputs):
         x_num, x_cat, x_time = inputs
-        
+
         # instance norm on numeric features
         x_num = self.ins_norm(x_num, mode='norm')
         
         # embedding
+        # (batch_size, seq_len, embedding_dim)
         x = self.input_embedding([x_num, x_cat, x_time])
-        
+
         # linear prediction
+        # (batch_size, pred_len + hist_len, embedding_dim)
+        x = tf.transpose(x, perm=[0,2,1])
         x = self.linear(x)
+        x = tf.transpose(x, perm=[0,2,1])
         
         # encoder
         x = self.enc(x)
-        
+
         # linear output
         x = self.dec(x)
-        
-        # return predictions
-        x = tf.gather(x, self.target_cols_index, axis=-1)
-        
-        return x[:, -self.pred_len:, :]
-    
-if __name__== "__main__":
-    
-    x_num = tf.random.normal((64, 32, 7))
-    x_time = tf.random.normal((64, 32, 7))
-    
-    model = TimesNet(
-                 target_cols_index=[6,7],
-                 pred_len=5,
-                 hist_len=6,
-                 num_layers=2,
-                 embedding_dim=16, 
-                 topk = 2,
-                 cov_hidden_dim = 32,
-                 num_kernels = 2,
-                 num_cat_cov=0, 
-                 cat_cov_embedding_size=[], 
-                 cat_cov_embedding_dim=4, 
-                 use_holiday=False, 
-                 freq='H', 
-                 dropout_rate=0.1, 
-    )
 
-    out = model([x_num, None, x_time])
-    print(out.shape)
-    
+        #print(ss)
+        return x[:, -self.pred_len:, :]
