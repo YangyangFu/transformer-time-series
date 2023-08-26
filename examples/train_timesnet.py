@@ -4,7 +4,7 @@ import random
 import numpy as np
 
 from tsl.transformers.informer import DataLoader
-from tsl.transformers.timesnet import TimesNet
+from tsl.convolutions.timesnet import TimesNet
 
 def set_seed(seed: int = 42) -> None:
     random.seed(seed)
@@ -61,7 +61,7 @@ model = TimesNet(target_cols_index = target_cols_index,
                 hist_len = source_seq_len,
                 num_layers=2,
                 embedding_dim=embed_dim, 
-                topk = 1,
+                topk = 5,
                 cov_hidden_dim = 32,
                 num_kernels = 6,
                 num_cat_cov=0, 
@@ -123,34 +123,6 @@ for epoch in range(MAX_EPOCHS):
         num_covs, cat_covs, time_enc, time_dec, target_dec = batch
         loss = train_step((num_covs, cat_covs, time_enc[:,:,:4]), target_dec[:, -pred_len:, :])
         
-        # check model summary
-        if epoch == 0:
-            model.summary()
-            # check number of parameters for different blocks in the encoder
-            print(f"Number of parameters in the encoder: {model.enc.count_params()}")
-            print(f"Number of parameters in the encoder blocks: {model.enc.blocks[0].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[0].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[1].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[0].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[1].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[2].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[3].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[4].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[0].conv[2].kernels[5].count_params()}")
-            print("======================================================================================")
-            print()
-            print(f"Number of parameters in the encoder blocks: {model.enc.blocks[1].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[0].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[1].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[0].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[1].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[2].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[3].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[4].count_params()}")
-            print(f"Number of parameters in the encoder inception 1: {model.enc.blocks[1].conv[2].kernels[5].count_params()}")
-
     # print loss every epoch
     print(f"Epoch {epoch+1}/{MAX_EPOCHS} training loss: {loss:.4f}, MAE: {train_metrics[0].result():.4f}")
     
