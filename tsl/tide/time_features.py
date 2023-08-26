@@ -118,6 +118,7 @@ class TimeCovariates(object):
       datetimes,
       normalized = True,
       holiday = False,
+      freq = "H",
   ):
     """Init function.
 
@@ -125,6 +126,7 @@ class TimeCovariates(object):
       datetimes: pandas DatetimeIndex (lowest granularity supported is min)
       normalized: whether to normalize features or not
       holiday: fetch holiday features or not
+      freq: frequency of the time series features
 
     Returns:
       None
@@ -132,7 +134,8 @@ class TimeCovariates(object):
     self.normalized = normalized
     self.dti = datetimes
     self.holiday = holiday
-
+    self.freq = freq
+    
   def _minute_of_hour(self):
     minutes = np.array(self.dti.minute, dtype=np.float32)
     if self.normalized:
@@ -191,29 +194,32 @@ class TimeCovariates(object):
     """Get all time covariates."""
     moh = self._minute_of_hour().reshape(1, -1)
     hod = self._hour_of_day().reshape(1, -1)
-    dom = self._day_of_month().reshape(1, -1)
     dow = self._day_of_week().reshape(1, -1)
+    dom = self._day_of_month().reshape(1, -1)
     doy = self._day_of_year().reshape(1, -1)
-    moy = self._month_of_year().reshape(1, -1)
     woy = self._week_of_year().reshape(1, -1)
+    moy = self._month_of_year().reshape(1, -1)
 
-    all_covs = [
-        moh,
-        hod,
-        dom,
-        dow,
-        doy,
-        moy,
-        woy,
-    ]
-    columns = ["moh", "hod", "dom", "dow", "doy", "moy", "woy"]
+    
+    freq_map = {"T": 7, 
+                "H": 6, 
+                "D": 5, 
+                "W": 2, 
+                "M": 1}
+    
+    all_covs = [moh, hod, dow, dom, doy, woy, moy]
+    all_columns = ["moh", "hod", "dow", "dom", "doy", "woy", "moy"]
+    
+    covs = all_covs[-freq_map[self.freq]:]
+    columns = all_columns[-freq_map[self.freq]:]
+    
     if self.holiday:
       hol_covs = self._get_holidays()
-      all_covs.append(hol_covs)
+      covs.append(hol_covs)
       columns += [f"hol_{i}" for i in range(len(HOLIDAYS))]
 
     return pd.DataFrame(
-        data=np.vstack(all_covs).transpose(),
+        data=np.vstack(covs).transpose(),
         columns=columns,
         index=self.dti,
     )

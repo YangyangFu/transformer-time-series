@@ -39,6 +39,11 @@ class PositionalEmbedding(tf.keras.layers.Layer):
         return pos_encoding[:seq_len, :]
 
 class TemporalEmbedding(tf.keras.layers.Layer):
+    """ Temporal embedding for time features
+    
+        This embedding treate each time feature as a categorical feature and embed them separately
+      
+    """
     def __init__(self, embedding_dim, freq='H', use_holiday=False):
         super().__init__()
         self.embedding_dim = embedding_dim
@@ -55,13 +60,19 @@ class TemporalEmbedding(tf.keras.layers.Layer):
         holiday_size = 19 # 18 holidays + 1 for no holiday
         
         # embedding layers
-        if freq=="t":
+        if freq=="T":
             self.moh_embedding = tf.keras.layers.Embedding(minute_size, self.embedding_dim)
-        self.hod_embedding = tf.keras.layers.Embedding(hour_size, self.embedding_dim)
-        self.dom_embedding = tf.keras.layers.Embedding(day_size, self.embedding_dim)
-        self.dow_embedding = tf.keras.layers.Embedding(weekday_size, self.embedding_dim)
+        if freq in ["T", "H"]:
+            self.hod_embedding = tf.keras.layers.Embedding(hour_size, self.embedding_dim)
+        if freq in ["T", "H", "D"]:
+            self.dow_embedding = tf.keras.layers.Embedding(weekday_size, self.embedding_dim)
+            self.dom_embedding = tf.keras.layers.Embedding(day_size, self.embedding_dim)
+            # skip day of year: too big and redundant
+        if freq in ["T", "H", "D", "W"]:
+            self.woy_embedding = tf.keras.layers.Embedding(week_size, self.embedding_dim)
+        
         self.moy_embedding = tf.keras.layers.Embedding(month_size, self.embedding_dim)
-        self.woy_embedding = tf.keras.layers.Embedding(week_size, self.embedding_dim)
+
         if self.use_holiday:
             self.holiday_embedding = tf.keras.layers.Embedding(holiday_size, self.embedding_dim)
         
@@ -77,18 +88,34 @@ class TemporalEmbedding(tf.keras.layers.Layer):
         # get the embedding for each time feature
         
         moh_embedding = self.moh_embedding(time_features[:,:,0]) if hasattr(self, "moh_embedding") else 0
-        hod_embedding = self.hod_embedding(time_features[:,:,1])
-        dom_embedding = self.dom_embedding(time_features[:,:,2])
-        dow_embedding = self.dow_embedding(time_features[:,:,3])
-        moy_embedding = self.moy_embedding(time_features[:,:,4])
-        woy_embedding = self.woy_embedding(time_features[:,:,5])
-        holiday_embedding = self.holiday_embedding(time_features[:,:,6]) if hasattr(self, "holiday_embedding") else 0
+        hod_embedding = self.hod_embedding(time_features[:,:,1]) if hasattr(self, "hod_embedding") else 0
+        dow_embedding = self.dow_embedding(time_features[:,:,2]) if hasattr(self, "dow_embedding") else 0
+        dom_embedding = self.dom_embedding(time_features[:,:,3]) if hasattr(self, "dom_embedding") else 0
+        woy_embedding = self.woy_embedding(time_features[:,:,5]) if hasattr(self, "woy_embedding") else 0
+        moy_embedding = self.moy_embedding(time_features[:,:,6]) 
+        holiday_embedding = self.holiday_embedding(time_features[:,:,7]) if hasattr(self, "holiday_embedding") else 0
         
         # sum the embeddings
-        x = moh_embedding + hod_embedding + dow_embedding + dom_embedding + moy_embedding + woy_embedding + holiday_embedding
+        x = moh_embedding + hod_embedding + dow_embedding + dom_embedding + woy_embedding + moy_embedding + holiday_embedding
 
         
         return x
+
+class TimeFeatureEmbedding(tf.keras.layers.Layer):
+    """ Embedding for time features
+
+        Time features include minute of hour, hour of day, day of week, day of month, month of year, week of year, holiday, etc
+        This embedding linearly projects the time features to a vector of embedding_dim
+    """
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.embeding_dim = embedding_dim        
+
+    def build(self, input_shape):
+        self.embed = tf.keras.layers.Dense(self.embeding_dim, input_shape=input_shape[-1:])
+    
+    def call(self, inputs):
+        return self.embed(inputs)
 
 class CategoricalEmbedding(tf.keras.layers.Layer):
     
