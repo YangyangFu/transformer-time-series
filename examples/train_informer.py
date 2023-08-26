@@ -52,7 +52,8 @@ dataloader = DataLoader(data_path=data_path,
                     pred_len=pred_len,
                     batch_size=32,
                     use_time_features=True,
-                    use_which_holiday=True,
+                    use_holiday=True,
+                    use_holiday_distance=False,
                     )
 train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
 val_ds = dataloader.generate_dataset(mode="validation", shuffle=False, seed=1)
@@ -81,7 +82,7 @@ model = Informer(output_dim=n_targets,
                 cat_cov_embedding_dim=16,
                 freq='H',
                 use_holiday=True,
-                dropout_rate=0.1,)
+                dropout_rate=0.2,)
 #%%
 # training settings
 loss_fn = tf.keras.losses.MeanSquaredError()

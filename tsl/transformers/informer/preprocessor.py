@@ -86,19 +86,45 @@ class TemporalEmbedding(tf.keras.layers.Layer):
             output: temporal encoding of shape (batch_size, seq_len, embedding_dim)
         """
         # get the embedding for each time feature
+        if self.freq=="T":
+            moh_embedding = self.moh_embedding(time_features[:,:,0]) 
+            hod_embedding = self.hod_embedding(time_features[:,:,1]) 
+            dow_embedding = self.dow_embedding(time_features[:,:,2]) 
+            dom_embedding = self.dom_embedding(time_features[:,:,3]) 
+            woy_embedding = self.woy_embedding(time_features[:,:,5]) 
+            moy_embedding = self.moy_embedding(time_features[:,:,6])
+            x = moh_embedding + hod_embedding + dow_embedding + dom_embedding + woy_embedding + moy_embedding
+            
+        elif self.freq=="H":
+            hod_embedding = self.hod_embedding(time_features[:,:,0]) 
+            dow_embedding = self.dow_embedding(time_features[:,:,1]) 
+            dom_embedding = self.dom_embedding(time_features[:,:,2]) 
+            woy_embedding = self.woy_embedding(time_features[:,:,4]) 
+            moy_embedding = self.moy_embedding(time_features[:,:,5])            
+            x = hod_embedding + dow_embedding + dom_embedding + woy_embedding + moy_embedding
         
-        moh_embedding = self.moh_embedding(time_features[:,:,0]) if hasattr(self, "moh_embedding") else 0
-        hod_embedding = self.hod_embedding(time_features[:,:,1]) if hasattr(self, "hod_embedding") else 0
-        dow_embedding = self.dow_embedding(time_features[:,:,2]) if hasattr(self, "dow_embedding") else 0
-        dom_embedding = self.dom_embedding(time_features[:,:,3]) if hasattr(self, "dom_embedding") else 0
-        woy_embedding = self.woy_embedding(time_features[:,:,5]) if hasattr(self, "woy_embedding") else 0
-        moy_embedding = self.moy_embedding(time_features[:,:,6]) 
-        holiday_embedding = self.holiday_embedding(time_features[:,:,7]) if hasattr(self, "holiday_embedding") else 0
+        elif self.freq=="D":
+            dow_embedding = self.dow_embedding(time_features[:,:,0]) 
+            dom_embedding = self.dom_embedding(time_features[:,:,1]) 
+            woy_embedding = self.woy_embedding(time_features[:,:,3]) 
+            moy_embedding = self.moy_embedding(time_features[:,:,4])
+            x = dow_embedding + dom_embedding + woy_embedding + moy_embedding
         
-        # sum the embeddings
-        x = moh_embedding + hod_embedding + dow_embedding + dom_embedding + woy_embedding + moy_embedding + holiday_embedding
-
+        elif self.freq=="W":
+            woy_embedding = self.woy_embedding(time_features[:,:,0]) 
+            moy_embedding = self.moy_embedding(time_features[:,:,1])
+            x = woy_embedding + moy_embedding
         
+        elif self.freq=="M":
+            moy_embedding = self.moy_embedding(time_features[:,:,0])
+            x = moy_embedding 
+        else:
+            raise ValueError("freq should be one of 'T', 'H', 'D', 'W', 'M'")
+            
+        if self.use_holiday:
+            holiday_embedding = self.holiday_embedding(time_features[:,:,-1]) 
+            x = x + holiday_embedding
+            
         return x
 
 class TimeFeatureEmbedding(tf.keras.layers.Layer):
