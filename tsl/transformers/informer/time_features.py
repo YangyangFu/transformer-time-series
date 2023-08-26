@@ -150,8 +150,8 @@ class TimeCovariates(object):
       self,
       datetimes,
       normalized = False,
+      use_holiday = False,
       use_holiday_distance = False,
-      use_which_holiday = False,
       freq='H',
   ):
     """Init function.
@@ -159,16 +159,18 @@ class TimeCovariates(object):
     Args:
       datetimes: pandas DatetimeIndex (lowest granularity supported is min)
       normalized: whether to normalize features or not
+      use_holiday: weather to use holiday features or not
       use_holiday_distance: whether to use holiday distance features or not, this will construct 18 features for each time stamp
-      use_which_holiday: whether to use which holiday features or not, this will construct 1 feature for each time stamp, indicating which holiday the timestamp is in
+      use_holiday_index: whether to use which holiday features or not, this will construct 1 feature for each time stamp, indicating which holiday the timestamp is in
 
     Returns:
       None
     """
     self.normalized = normalized
     self.dti = datetimes
+    self.use_holiday = use_holiday
     self.use_holiday_distance = use_holiday_distance
-    self.use_which_holiday = use_which_holiday
+    self.use_holiday_index = True if use_holiday and not use_holiday_distance else False
     self.freq = freq
     
   def _minute_of_hour(self):
@@ -225,7 +227,7 @@ class TimeCovariates(object):
     # performed in the num_time_steps dimension.
     return StandardScaler().fit_transform(hol_variates.T).T
 
-  def _get_which_holiday(self):
+  def _get_holiday_index(self):
     dti_series = self.dti.to_series()
     hol_variates = np.hstack([_which_holiday(t) for t in tqdm(dti_series)])
 
@@ -256,13 +258,13 @@ class TimeCovariates(object):
     covs = all_covs[-freq_map[self.freq]:]
     columns = all_columns[-freq_map[self.freq]:]
     
-    if self.use_holiday_distance:
+    if self.use_holiday and self.use_holiday_distance:
       hol_covs = self._get_distance_holidays()
       covs.append(hol_covs)
       columns += [f"hol_{i+1}" for i in range(len(HOLIDAYS))]
 
-    if self.use_which_holiday:
-      hol_covs = self._get_which_holiday()
+    if self.use_holiday and self.use_holiday_index:
+      hol_covs = self._get_holiday_index()
       covs.append(hol_covs)
       columns += ["hol"]
     
