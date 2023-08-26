@@ -150,24 +150,28 @@ class TimeCovariates(object):
       self,
       datetimes,
       normalized = False,
+      use_holiday = False,
       use_holiday_distance = False,
-      use_which_holiday = False,
+      freq='H',
   ):
     """Init function.
 
     Args:
       datetimes: pandas DatetimeIndex (lowest granularity supported is min)
       normalized: whether to normalize features or not
+      use_holiday: weather to use holiday features or not
       use_holiday_distance: whether to use holiday distance features or not, this will construct 18 features for each time stamp
-      use_which_holiday: whether to use which holiday features or not, this will construct 1 feature for each time stamp, indicating which holiday the timestamp is in
+      use_holiday_index: whether to use which holiday features or not, this will construct 1 feature for each time stamp, indicating which holiday the timestamp is in
 
     Returns:
       None
     """
     self.normalized = normalized
     self.dti = datetimes
+    self.use_holiday = use_holiday
     self.use_holiday_distance = use_holiday_distance
-    self.use_which_holiday = use_which_holiday
+    self.use_holiday_index = True if use_holiday and not use_holiday_distance else False
+    self.freq = freq
     
   def _minute_of_hour(self):
     minutes = np.array(self.dti.minute, dtype=np.float32)
@@ -223,7 +227,7 @@ class TimeCovariates(object):
     # performed in the num_time_steps dimension.
     return StandardScaler().fit_transform(hol_variates.T).T
 
-  def _get_which_holiday(self):
+  def _get_holiday_index(self):
     dti_series = self.dti.to_series()
     hol_variates = np.hstack([_which_holiday(t) for t in tqdm(dti_series)])
 
@@ -235,34 +239,37 @@ class TimeCovariates(object):
     """Get all time covariates."""
     moh = self._minute_of_hour().reshape(1, -1)
     hod = self._hour_of_day().reshape(1, -1)
-    dom = self._day_of_month().reshape(1, -1)
     dow = self._day_of_week().reshape(1, -1)
-    #doy = self._day_of_year().reshape(1, -1)
-    moy = self._month_of_year().reshape(1, -1)
+    dom = self._day_of_month().reshape(1, -1)
+    doy = self._day_of_year().reshape(1, -1)
     woy = self._week_of_year().reshape(1, -1)
+    moy = self._month_of_year().reshape(1, -1)
 
-    all_covs = [
-        moh,
-        hod,
-        dom,
-        dow,
-        #doy,
-        moy,
-        woy,
-    ]
-    columns = ["moh", "hod", "dom", "dow", "moy", "woy"]
-    if self.use_holiday_distance:
+    
+    freq_map = {"T": 7, 
+                "H": 6, 
+                "D": 5, 
+                "W": 2, 
+                "M": 1}
+    
+    all_covs = [moh, hod, dow, dom, doy, woy, moy]
+    all_columns = ["moh", "hod", "dow", "dom", "doy", "woy", "moy"]
+    
+    covs = all_covs[-freq_map[self.freq]:]
+    columns = all_columns[-freq_map[self.freq]:]
+    
+    if self.use_holiday and self.use_holiday_distance:
       hol_covs = self._get_distance_holidays()
-      all_covs.append(hol_covs)
+      covs.append(hol_covs)
       columns += [f"hol_{i+1}" for i in range(len(HOLIDAYS))]
 
-    if self.use_which_holiday:
-      hol_covs = self._get_which_holiday()
-      all_covs.append(hol_covs)
+    if self.use_holiday and self.use_holiday_index:
+      hol_covs = self._get_holiday_index()
+      covs.append(hol_covs)
       columns += ["hol"]
     
     return pd.DataFrame(
-        data=np.vstack(all_covs).transpose(),
+        data=np.vstack(covs).transpose(),
         columns=columns,
         index=self.dti,
     )

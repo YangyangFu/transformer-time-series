@@ -29,8 +29,9 @@ class DataLoader():
                  freq='H',
                  normalize=True,
                  use_time_features=False,
+                 use_holiday=False,
                  use_holiday_distance=False,
-                 use_which_holiday=True,
+                 normalize_time_features=False,
                  ):
         """_summary_
 
@@ -63,9 +64,10 @@ class DataLoader():
         self.token_len = min(token_len, hist_len) # token length (previous history) used for decoder
         self.pred_len = pred_len # prediction length used for decoder
         self.batch_size = batch_size
-        self.use_time_features = use_time_features
-        self.use_holiday_distance = use_holiday_distance
-        self.use_which_holiday = use_which_holiday
+        self.use_time_features = use_time_features # whether to use time features or not
+        self.use_holiday = use_holiday # whether to use holiday is the time features or not
+        self.use_holiday_distance = use_holiday_distance # whether to use holiday distance as the holiday feature or not
+        self.use_holiday_index = True if use_holiday and not use_holiday_distance else False # whether to use which holiday as the holiday feature or not
         
         self.window_size = self.hist_len + self.pred_len
         # read data
@@ -95,9 +97,9 @@ class DataLoader():
         if use_time_features:
             self.time_features = TimeCovariates(
                 self.data_df.index, 
-                use_holiday_distance=use_holiday_distance,
-                use_which_holiday=use_which_holiday,
-                normalized=False,
+                use_holiday=self.use_holiday,
+                use_holiday_distance=self.use_holiday_distance,
+                normalized=normalize_time_features,
             ).get_covariates()
             self.time_features_cols = self.time_features.columns
         

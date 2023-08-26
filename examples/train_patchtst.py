@@ -47,6 +47,7 @@ dataloader = DataLoader(data_path=data_path,
                     token_len=target_seq_len-pred_len,
                     pred_len=pred_len,
                     batch_size=64,
+                    use_time_features=False,
                     )
 train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
 val_ds = dataloader.generate_dataset(mode="validation", shuffle=False, seed=1)

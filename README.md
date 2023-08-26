@@ -29,7 +29,7 @@ Assume we have two years of historical electricity price data from energy market
 - [x] Informer
 - [ ] Temporal Fusion Transformer
 - [x] TiDE
-- [ ] PatchTST
+- [x] PatchTST
 
 ## Notes
 1. How padding mask and causal mask work in transformer?
