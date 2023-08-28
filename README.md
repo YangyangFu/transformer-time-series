@@ -6,10 +6,6 @@ A library to benchmark various transformer and nontransformer models on typical 
 - Probalistic Long-term forcasting
 - Representation learning
  
-
-## Environment
-- cuda 11.8
-
 ## Algorithms
 - [x] Baseline Model
 - [x] ARIMA
