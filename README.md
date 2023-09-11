@@ -2,34 +2,31 @@
 A library to benchmark various transformer and nontransformer models on typical time series prediction, imputation and abnormality detection
 
 ## Tasks
-Assume we have two years of historical electricity price data from energy market, we want to predict the next 24-hour ahead prices.
-- deterministic prediction
-  - 24-hour ahead
-- probablistic prediction
-  - 24-hour ahead
-
-## Environment
-- cuda 11.8
-
-
+- Long-term forcasting
+- Probalistic Long-term forcasting
+- Representation learning
+ 
 ## Algorithms
-- [ ] Baseline Model
-- [ ] ARIMA
-- [ ] XGBoost
-- [ ] LSTM
+- [x] Baseline Model
+- [x] ARIMA
+- [x] XGBoost
+- [x] LSTM
 - [ ] Encoder-Decoder RNN
-- [ ] Transformer
 
-
-## Transformers
-- [ ] TimesNet
+### Transformers
 - [ ] DLinear
 - [ ] Non-stationary Transformer
 - [ ] Autoformer
 - [x] Informer
 - [ ] Temporal Fusion Transformer
-- [x] TiDE
 - [x] PatchTST
+
+### Convs
+- [x] 'TimesNet': uses Inception network as backbone to extract 2-D information for 1-D timeseries
+
+### MLP
+- [x] TiDE: pure MLP encoder/decoder archtiecture
+- [ ] DLinear
 
 ## Notes
 1. How padding mask and causal mask work in transformer?
