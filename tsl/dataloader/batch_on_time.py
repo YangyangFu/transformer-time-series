@@ -5,7 +5,7 @@ import numpy as np
 import joblib 
 import os
  
-from time_features import TimeCovariates
+from tsl.utils.time_features import TimeCovariates
 
 """ Assume joblib data format with the first column as datetime column"""
 
@@ -81,8 +81,10 @@ class DataLoader():
         self.use_holiday = use_holiday # whether to use holiday is the time features or not
         self.use_holiday_distance = use_holiday_distance # whether to use holiday distance as the holiday feature or not
         self.use_holiday_index = True if use_holiday and not use_holiday_distance else False # whether to use which holiday as the holiday feature or not
+        # whether to use hisotry and future for covariates just like for time series
         self.normalize_time_features = normalize_time_features
-        self.use_history_for_covariates = use_history_for_covariates # whether to use hisotry and future for covariates just like for time series
+        self.use_history_for_covariates = use_history_for_covariates
+        
         self.window_size = self.hist_len + self.pred_len
         
         ## read ts and features        
@@ -164,7 +166,6 @@ class DataLoader():
             self.time_features_names = self.time_features.columns
             
             # TODO: get size of categorical time features
-            
         ## default settings
         if self.target_cols is None:
             self.target_cols = self._ts.columns
@@ -206,7 +207,7 @@ class DataLoader():
                                                    axis=0)
             
 
-    def _split_window(self, window):
+    def _split_window(self, window, extract_target=True):
         """_summary_
 
         Args:
@@ -231,7 +232,7 @@ class DataLoader():
         return history, future
     
     def generator(self, start_idx, end_idx, shuffle=True, seed=0):
-        """ generate data with batch on the number of time series instead of time steps
+        """_summary_
 
         Args:
             data (_type_): _description_
@@ -240,114 +241,111 @@ class DataLoader():
         Yields:
             _type_: _description_
         """
-        # create window indice
+        # create a dataset of indices
         start = start_idx
         end = end_idx - self.window_size + 1
-        t_idx = range(start, end)
-        
-        
-        # create batch indice
-        b_idx = tf.data.Dataset.range(len(self.target_cols))
-        
+        idx = tf.data.Dataset.range(start, end)
+
         # shuffle indices
         if shuffle:
-            t_idx = tf.random.shuffle(t_idx, seed=seed)
-            b_idx = b_idx.shuffle(
-                buffer_size=len(self.target_cols),
+            idx = idx.shuffle(
+                buffer_size=(end-start),
                 seed=seed)
         
         # batch indices
-        idx = b_idx.batch(self.batch_size)
+        idx = idx.batch(self.batch_size)
         
         # map indices to data at each batch    
         # map covariate data
-        for t in t_idx:
-            for batch_idx in idx:
-                (ts_batch, 
-                num_global_batch, 
-                cat_global_batch, 
-                num_local_variant_batch, 
-                cat_local_variant_batch, 
-                num_local_invariant_batch, 
-                cat_local_invariant_batch, 
-                time_batch ) = self._gather_all_features(batch_idx, t)
-                
-                # use historical ts to predict future
-                ts_enc, ts_dec = self._split_window(ts_batch)
-                
-                # split global feature into history and future if needed
-                num_global_enc, num_global_dec = None, None
-                if num_global_batch is not None:
-                    if num_global_batch.shape[-2] == self.window_size:
-                        # (B, L, n), (B, H, n) <- (B, L+H, n)
-                        num_global_enc, num_global_dec = self._split_window(num_global_batch)
-                    elif num_global_batch.shape[-2] == 1:
-                        # (B, 1, n), None <- (B, 1, n)
-                        num_global_enc, num_global_dec = num_global_batch, None
-                        
-                cat_global_enc, cat_global_dec = None, None
-                if cat_global_batch is not None:
-                    if cat_global_batch.shape[-2] == self.window_size:
-                        # (B, L, n), (B, H, n) <- (B, L+H, n)
-                        cat_global_enc, cat_global_dec = self._split_window(cat_global_batch)
-                    elif cat_global_batch.shape[-2] == 1:
-                        # (B, 1, n), None <- (B, 1, n)
-                        cat_global_enc, cat_global_dec = cat_global_batch, None
-                    
-                # split local variant 
-                num_local_variant_enc, num_local_variant_dec = None, None
-                if num_local_variant_batch is not None:
+        for batch_idx in idx:
+            (ts_batch, 
+            num_global_batch, 
+            cat_global_batch, 
+            num_local_variant_batch, 
+            cat_local_variant_batch, 
+            num_local_invariant_batch, 
+            cat_local_invariant_batch, 
+            time_batch ) = self._gather_all_features(batch_idx)
+            
+            # use historical ts to predict future
+            # (B, L, M), (B, H, M) <- (B, L+H, M)
+            ts_enc, ts_dec = self._split_window(ts_batch, extract_target=True)
+
+            # split global feature into history and future if needed
+            num_global_enc, num_global_dec = None, None
+            if num_global_batch is not None:
+                if num_global_batch.shape[-2] == self.window_size:
                     # (B, L, n), (B, H, n) <- (B, L+H, n)
-                    if num_local_variant_batch.shape[-2] == self.window_size:
-                        num_local_variant_enc, num_local_variant_dec = self._split_window(num_local_variant_batch)
+                    num_global_enc, num_global_dec = self._split_window(num_global_batch, extract_target=False)
+                elif num_global_batch.shape[-2] == 1:
                     # (B, 1, n), None <- (B, 1, n)
-                    elif num_local_variant_batch.shape[-2] == 1:
-                        num_local_variant_enc, num_local_variant_dec = num_local_variant_batch, None
+                    num_global_enc, num_global_dec = num_global_batch, None
                     
-                cat_local_variant_enc, cat_local_variant_dec = None, None
-                if cat_local_variant_batch is not None:
-                    if cat_local_variant_batch.shape[-2] == self.window_size:
-                        # (B, L, n), (B, H, n) <- (B, L+H, n)
-                        cat_local_variant_enc, cat_local_variant_dec = self._split_window(cat_local_variant_batch)
-                    elif cat_local_variant_batch.shape[-2] == 1:
-                        cat_local_variant_enc, cat_local_variant_dec = cat_local_variant_batch, None
+            cat_global_enc, cat_global_dec = None, None
+            if cat_global_batch is not None:
+                if cat_global_batch.shape[-2] == self.window_size:
+                    # (B, L, n), (B, H, n) <- (B, L+H, n)
+                    cat_global_enc, cat_global_dec = self._split_window(cat_global_batch, extract_target=False)
+                elif cat_global_batch.shape[-2] == 1:
+                    # (B, 1, n), None <- (B, 1, n)
+                    cat_global_enc, cat_global_dec = cat_global_batch, None
                 
-                # split local invariant: local invariant is not dependent on time
-                # there is no need to split but just for consistency
-                num_local_invariant_enc, num_local_invariant_dec = None, None
-                if num_local_invariant_batch is not None:
-                    # (B, n), None <- (B, n)
-                    num_local_invariant_enc, num_local_invariant_dec = num_local_invariant_batch, None
+            # split local variant 
+            num_local_variant_enc, num_local_variant_dec = None, None
+            if num_local_variant_batch is not None:
+                # (B, n, L, M), (B, n, H, M) <- (B, n, L+H, M)
+                if num_local_variant_batch.shape[-2] == self.window_size:
+                    num_local_variant_enc, num_local_variant_dec = self._split_window(num_local_variant_batch)
+                # (B, n, 1, M), None <- (B, n, 1, M)
+                elif num_local_variant_batch.shape[-2] == 1:
+                    num_local_variant_enc, num_local_variant_dec = num_local_variant_batch, None
                 
-                cat_local_invariant_enc, cat_local_invariant_dec = None, None
-                if cat_local_invariant_batch is not None:
-                    # (B, n), None <- (B, n)
-                    cat_local_invariant_enc, cat_local_invariant_dec = cat_local_invariant_batch, None                
-                
-                # split time features
-                time_features_enc, time_features_dec = None, None
-                if self.use_time_features:
-                    time_features_enc, time_features_dec = self._split_window(time_batch)
-                
-                # output
-                enc = (ts_enc, num_global_enc, cat_global_enc, 
-                    num_local_variant_enc, cat_local_variant_enc, 
-                    num_local_invariant_enc, cat_local_invariant_enc, time_features_enc)
-                
-                dec = (ts_dec, num_global_dec, cat_global_dec, 
-                    num_local_variant_dec, cat_local_variant_dec, 
-                    num_local_invariant_dec, cat_local_invariant_dec, time_features_dec)
-                
-                yield enc, dec
+            cat_local_variant_enc, cat_local_variant_dec = None, None
+            if cat_local_variant_batch is not None:
+                if cat_local_variant_batch.shape[-2] == self.window_size:
+                    # (B, n, L, M), (B, n, H, M) <- (B, n, L+H, M)
+                    cat_local_variant_enc, cat_local_variant_dec = self._split_window(cat_local_variant_batch)
+                elif cat_local_variant_batch.shape[-2] == 1:
+                    # (B, n, 1, M), None <- (B, n, 1, M)
+                    cat_local_variant_enc, cat_local_variant_dec = cat_local_variant_batch, None
+            
+            # split local invariant: local invariant is not dependent on time
+            # there is no need to split but just for consistency
+            num_local_invariant_enc, num_local_invariant_dec = None, None
+            if num_local_invariant_batch is not None:
+                # (B, M, n), None <- (B, M, n)
+                num_local_invariant_enc, num_local_invariant_dec = num_local_invariant_batch, None
+            
+            cat_local_invariant_enc, cat_local_invariant_dec = None, None
+            if cat_local_invariant_batch is not None:
+                # (B, M, n), None <- (B, M, n)
+                cat_local_invariant_enc, cat_local_invariant_dec = cat_local_invariant_batch, None                
+            
+            # split time features
+            time_features_enc, time_features_dec = None, None
+            if self.use_time_features:
+                # (B, L, n), (B, H, n) <- (B, L+H, n)
+                time_features_enc, time_features_dec = self._split_window(time_batch)
+            
+            # output
+            enc = (ts_enc, num_global_enc, cat_global_enc, 
+                num_local_variant_enc, cat_local_variant_enc, 
+                num_local_invariant_enc, cat_local_invariant_enc, time_features_enc)
+            
+            dec = (ts_dec, num_global_dec, cat_global_dec, 
+                num_local_variant_dec, cat_local_variant_dec, 
+                num_local_invariant_dec, cat_local_invariant_dec, time_features_dec)
+            
+            yield enc, dec
 
     def generate_dataset(self, mode="train", shuffle=False, seed=0):
         # get range [start, end)
         if mode == "train":
             start_idx, end_idx = self.train_range[0], self.train_range[1]
         elif mode == "validation":
-            start_idx, end_idx = self.val_range[0] - self.hist_len, self.val_range[1]
+            start_idx, end_idx = self.val_range[0], self.val_range[1]
         elif mode == "test":
-            start_idx, end_idx = self.test_range[0] - self.hist_len, self.test_range[1]
+            start_idx, end_idx = self.test_range[0], self.test_range[1]
         else:
             raise ValueError("mode must be one of 'train', 'validation', 'test'")
         
@@ -360,110 +358,106 @@ class DataLoader():
                           (tf.float32, tf.float32, tf.float32, 
                           tf.float32, tf.float32,
                           tf.float32, tf.float32, tf.float32))
-            )
+        )
         ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
         
         return ds 
     
-    def _gather_all_features(self, batch_idx, t_idx):
+    def _gather_all_features(self, batch_idx):
         """ Gahter all features from given time series data 
-            batch_idx: index of the time series to make up a batch
-            t_idx: time instance of current batch
-            
+
             return:
                 time_feature_batch, num_cov_global_batch, cat_cov_global_batch, 
                 num_local_variant_batch, cat_local_variant_batch, num_local_invariant_batch, cat_local_invariant_batch
                 
         """
         # features: numeric covariates, categorical covariates, time features
-        # time series batch: (B, L+H, 1)
+        # time series batch: (B, L+H, M)
         ts_batch = np.stack(
-                [self._ts.values[t_idx:t_idx+self.window_size, i] for i in batch_idx.numpy()],
+                [self._ts.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
                 axis = 0
             ) 
-        ts_batch = np.expand_dims(ts_batch, axis=-1)
         
         # global numeric: (B, L+H, Ngn) or (B, 1, Ngn)
         num_global_batch = None
+        
         if self.num_cov_global:
             if self.use_history_for_covariates:
                 num_global_batch = np.stack(
-                        [self._num_cov_global.values[t_idx:t_idx+self.window_size, :] for i in batch_idx.numpy()],
+                        [self._num_cov_global.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
                         axis = 0
                     )
             else:
             # if no history for global features is need, we only use current time index for predictions
             # Note: t_idx is actually the previous hist_len step, the current step should be (t_idx + hist_len - 1)
                 num_global_batch = np.stack(
-                        [self._num_cov_global.values[[t_idx+self.hist_len-1], :] for i in batch_idx.numpy()],
+                        [self._num_cov_global.values[[i+self.hist_len-1], :] for i in batch_idx.numpy()],
                         axis = 0
                     )
-                
-        # global categorical: (B, L+H, Ngc) or (B, 1, Ngc)
+                                
+        # global categorical: (B, L+H, Ngc)
         cat_global_batch = None
         if self.cat_cov_global:
             if self.use_history_for_covariates:
                 cat_global_batch = np.stack(
-                        [self._cat_cov_global.values[t_idx:t_idx+self.window_size, :] for i in batch_idx.numpy()],
+                        [self._cat_cov_global.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
                         axis = 0
                 )
             else:
                 cat_global_batch = np.stack(
-                        [self._cat_cov_global.values[[t_idx+self.hist_len-1], :] for i in batch_idx.numpy()],
+                        [self._cat_cov_global.values[[i+self.hist_len-1], :] for i in batch_idx.numpy()],
                         axis = 0
                 )
-            
-        # local numeric time variant: (B, L+H, Nln) or (B, 1, Nln)
+                
+        # local numeric time variant: (B, Nln, L+H, M)
         num_local_variant_batch = None 
         if self.num_cov_local_variant:
             if self.use_history_for_covariates:
                 num_local_variant_batch = np.stack(
-                        [self._num_cov_local_variant[:, t_idx:t_idx+self.window_size, i] for i in batch_idx.numpy()],
+                        [self._num_cov_local_variant[:, i:i+self.window_size, :] for i in batch_idx.numpy()],
                         axis = 0
                 )
-                num_local_variant_batch = np.transpose(num_local_variant_batch, axes=(0, 2, 1))
             else:
                 num_local_variant_batch = np.stack(
-                        [self._num_cov_local_variant[:, [t_idx+self.hist_len-1], i] for i in batch_idx.numpy()],
+                        [self._num_cov_local_variant[:, [i+self.hist_len-1], :] for i in batch_idx.numpy()],
                         axis = 0
-                )
-                num_local_variant_batch = np.transpose(num_local_variant_batch, axes=(0, 2, 1))
-                
-        # local categorical time variant: (B, L+H, Nlc) or (B, 1, Nlc)
+                )                
+
+        # local categorical time variant: (B, Nlc, L+H, T)
         cat_local_variant_batch = None
         if self.cat_cov_local_variant:
             if self.use_history_for_covariates:
                 cat_local_variant_batch = np.stack(
-                        [self._cat_cov_local_variant[:, t_idx:t_idx+self.window_size, i] for i in batch_idx.numpy()],
+                        [self._cat_cov_local_variant[:, i:i+self.window_size, :] for i in batch_idx.numpy()],
                         axis = 0
                 )
-                cat_local_variant_batch = np.transpose(cat_local_variant_batch, axes=(0, 2, 1))
             else:
                 cat_local_variant_batch = np.stack(
-                        [self._cat_cov_local_variant[:, [t_idx+self.hist_len-1], i] for i in batch_idx.numpy()],
+                        [self._cat_cov_local_variant[:, [i+self.hist_len-1], :] for i in batch_idx.numpy()],
                         axis = 0
                 )
-                cat_local_variant_batch = np.transpose(cat_local_variant_batch, axes=(0, 2, 1))
-                                
-        # local numeric time invariant: (B, Nlni)
+                
+        # local numeric time invariant: (B, M, Nlci)
         num_local_invariant_batch = None
         if self.num_cov_local_invariant:
+            # repeat B times
             num_local_invariant_batch = np.stack(
-                [self._num_cov_local_invariant.values[i, :] for i in batch_idx.numpy()]
+                [self._num_cov_local_invariant for _ in batch_idx.numpy()]
             )
         
-        # local categorical time invariant; (B, Nlci)
+        # local categorical time invariant
         cat_local_invariant_batch = None
         if self.cat_cov_local_invariant:
+            # repeat B times
             cat_local_invariant_batch = np.stack(
-                [self._cat_cov_local_invariant.values[i, :] for i in batch_idx.numpy()]
+                [self._cat_cov_local_invariant for _ in batch_idx.numpy()]
             )               
         
         # batch for time features: (B, L+H, Ntf)
         time_batch = None
         if self.use_time_features:
             time_batch = np.stack(
-                    [self.time_features.values[t_idx:t_idx+self.window_size, :] for i in batch_idx.numpy()],
+                    [self.time_features.values[i:i+self.window_size, :] for i in batch_idx.numpy()],
                     axis = 0
                 )
         return (ts_batch, 

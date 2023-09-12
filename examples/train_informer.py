@@ -4,31 +4,21 @@ import os
 import random 
 import numpy as np
 
-from tsl.transformers.informer import DataLoader
+#from tsl.transformers.informer import DataLoader
+from tsl.dataloader.batch_on_time import DataLoader
 from tsl.transformers.informer import Informer
+from tsl.utils.utils import seed_everything
 
-def set_seed(seed: int = 42) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.random.set_seed(seed)
-    tf.experimental.numpy.random.seed(seed)
-    tf.random.set_seed(seed)
-    # When running on the CuDNN backend, two further options must be set
-    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-    os.environ['TF_DETERMINISTIC_OPS'] = '1'
-    # Set a fixed value for the hash seed
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    print(f"Random seed set as {seed}")
 
-set_seed(42)
+seed_everything(42)
 
 # example settings 
 embed_dim = 512
 source_seq_len = 360
 pred_len = 24
 target_seq_len = 168 + pred_len
-target_cols=['OT']
-num_cov_cols=['OT'] #['HUFL','HULL','MUFL','MULL','LUFL','LULL','OT']
+target_cols=['HUFL','HULL','MUFL','MULL','LUFL','LULL','OT']
+num_cov_cols=['HUFL','HULL','MUFL','MULL','LUFL','LULL','OT']
 n_num_covs = len(num_cov_cols)
 n_targets = len(target_cols)
 
@@ -38,23 +28,38 @@ MAX_EPOCHS = 10
 # get data path
 file_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.dirname(file_path)
-data_path = os.path.join(root_path, "datasets", "ETT-small", "ETTh1.csv")
+data_path = os.path.join(root_path, "datasets", "ETT-small", "ETTh1")
 
-# create dataloader
-dataloader = DataLoader(data_path=data_path,
-                    target_cols=target_cols,
-                    num_cov_cols=num_cov_cols,
-                    train_range=(0, 24*30*12),
-                    val_range=(24*30*12, 24*30*16),
-                    test_range=(24*30*16, 24*30*20),
-                    hist_len=source_seq_len,
-                    token_len=target_seq_len-pred_len,
-                    pred_len=pred_len,
-                    batch_size=32,
-                    use_time_features=True,
-                    use_holiday=True,
-                    use_holiday_distance=False,
-                    )
+ts_file = 'ts.joblib'
+ 
+dataloader = DataLoader(
+        data_path,
+        ts_file,
+        num_cov_global_file=None,
+        cat_cov_global_file=None,
+        num_cov_local_variant_file=[],
+        cat_cov_local_variant_file=[],
+        num_cov_local_invariant_file=[],
+        cat_cov_local_invariant_file=[],
+        num_cov_local_variant_names=[],
+        cat_cov_local_variant_names=[],
+        target_cols=target_cols,
+        train_range=(0, 24*30*12),
+        val_range=(24*30*12, 24*30*16),
+        test_range=(24*30*16, 24*30*20),
+        hist_len=source_seq_len,
+        token_len=target_seq_len-pred_len,
+        pred_len=pred_len,
+        batch_size=32,
+        freq='H',
+        normalize=True,
+        use_time_features=True,
+        use_holiday=True,
+        use_holiday_distance=False,
+        normalize_time_features=False,
+        use_history_for_covariates=False
+)
+
 train_ds = dataloader.generate_dataset(mode="train", shuffle=True, seed=1)
 val_ds = dataloader.generate_dataset(mode="validation", shuffle=False, seed=1)
 test_ds = dataloader.generate_dataset(mode="test", shuffle=False, seed=1)
@@ -141,20 +146,26 @@ best = np.Inf
 for epoch in range(MAX_EPOCHS):
     # take a batch
     for batch in train_ds:
-        num_covs, cat_covs, time_enc, time_dec, target_dec = batch
-        
+        enc, dec = batch
+        (ts_enc, num_global_enc, cat_global_enc, 
+         num_local_variant_enc, cat_local_variant_enc, 
+         num_local_invariant_enc, cat_local_invariant_enc, time_features_enc) = enc
+        (ts_dec, num_global_dec, cat_global_dec, 
+         num_local_variant_dec, cat_local_variant_dec, 
+         num_local_invariant_dec, cat_local_invariant_dec, time_features_dec) = dec
+                
         #try: 
         # zero for target 
-        token_dec = target_dec[:, :-pred_len, :]
-        zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
+        token_dec = ts_dec[:, :-pred_len, :]
+        zeros = tf.zeros_like(ts_dec[:, -pred_len:, :])
         token_target_dec = tf.concat([token_dec, zeros], axis=1)
         
         # feed model
-        x_enc = (num_covs, cat_covs, time_enc)
-        x_dec = (time_dec, token_target_dec)
+        x_enc = (ts_enc, None, time_features_enc)
+        x_dec = (time_features_dec, token_target_dec)
         
         # train step
-        loss = train_step((x_enc, x_dec), target_dec[:, -pred_len:, :])
+        loss = train_step((x_enc, x_dec), ts_dec[:, -pred_len:, :])
             
         #except tf.errors.OutOfRangeError:
         #    pass
@@ -170,20 +181,26 @@ for epoch in range(MAX_EPOCHS):
     # how to run validaiton loop without batching?
     
     for val_batch in val_ds:
-        num_covs, cat_covs, time_enc, time_dec, target_dec = val_batch
+        enc, dec = val_batch
+        (ts_enc, num_global_enc, cat_global_enc, 
+         num_local_variant_enc, cat_local_variant_enc, 
+         num_local_invariant_enc, cat_local_invariant_enc, time_features_enc) = enc
+        (ts_dec, num_global_dec, cat_global_dec, 
+         num_local_variant_dec, cat_local_variant_dec, 
+         num_local_invariant_dec, cat_local_invariant_dec, time_features_dec) = dec
         
 
         # zero for target 
-        token_dec = target_dec[:, :-pred_len, :]
-        zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
+        token_dec = ts_dec[:, :-pred_len, :]
+        zeros = tf.zeros_like(ts_dec[:, -pred_len:, :])
         token_target_dec = tf.concat([token_dec, zeros], axis=1)
         
         # feed model
-        x_enc = (num_covs, cat_covs, time_enc)
-        x_dec = (time_dec, token_target_dec)
+        x_enc = (ts_enc, None, time_features_enc)
+        x_dec = (time_features_dec, token_target_dec)
         
         # calculate loss
-        loss_val = val_step((x_enc, x_dec), target_dec[:, -pred_len:, :])
+        loss_val = val_step((x_enc, x_dec), ts_dec[:, -pred_len:, :])
     
         # print loss every epoch
     print(f"Epoch {epoch+1}/{MAX_EPOCHS} validation loss: {loss_val:.4f}, MAE: {val_metrics[0].result():.4f}")
@@ -205,19 +222,26 @@ for epoch in range(MAX_EPOCHS):
         
 #%%
 for test_batch in test_ds:
-    num_covs, cat_covs, time_enc, time_dec, target_dec = test_batch
+    enc, dec = val_batch
+    (ts_enc, num_global_enc, cat_global_enc, 
+        num_local_variant_enc, cat_local_variant_enc, 
+        num_local_invariant_enc, cat_local_invariant_enc, time_features_enc) = enc
+    (ts_dec, num_global_dec, cat_global_dec, 
+        num_local_variant_dec, cat_local_variant_dec, 
+        num_local_invariant_dec, cat_local_invariant_dec, time_features_dec) = dec
+    
 
-    # zero for target
-    token_dec = target_dec[:, :-pred_len, :]
-    zeros = tf.zeros_like(target_dec[:, -pred_len:, :])
+    # zero for target 
+    token_dec = ts_dec[:, :-pred_len, :]
+    zeros = tf.zeros_like(ts_dec[:, -pred_len:, :])
     token_target_dec = tf.concat([token_dec, zeros], axis=1)
 
     # feed model
-    x_enc = (num_covs, cat_covs, time_enc)
-    x_dec = (time_dec, token_target_dec)
+    x_enc = (ts_enc, None, time_features_enc)
+    x_dec = (time_features_dec, token_target_dec)
 
     # calculate loss
-    loss_test = test_step((x_enc, x_dec), target_dec[:, -pred_len:, :])
+    loss_test = test_step((x_enc, x_dec), ts_dec[:, -pred_len:, :])
 
 # print loss every epoch
 print(f"Test loss: {loss_test:.4f}, MAE: {test_metrics[0].result():.4f}")
