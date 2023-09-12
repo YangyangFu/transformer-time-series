@@ -164,3 +164,4 @@ cython_debug/
 *.v2
 *.DS_Store
 *__MACOSX
+*.joblib
