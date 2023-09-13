@@ -218,6 +218,7 @@ def training():
         num_local_variant_dec, cat_local_variant_dec, 
         num_local_invariant_dec, cat_local_invariant_dec, time_features_dec) = dec      
       
+      # Note the orginal paper uses constant 0 for categorical features if not specified.
       # (B, L), (nx, L), ()
       past_data = (tf.squeeze(ts_enc), tf.transpose(time_features_enc[0,:, :], perm=(1,0)), tf.zeros((1, source_seq_len)))
       # (nx, H), () 
