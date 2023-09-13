@@ -222,7 +222,7 @@ for epoch in range(MAX_EPOCHS):
         
 #%%
 for test_batch in test_ds:
-    enc, dec = val_batch
+    enc, dec = test_batch
     (ts_enc, num_global_enc, cat_global_enc, 
         num_local_variant_enc, cat_local_variant_enc, 
         num_local_invariant_enc, cat_local_invariant_enc, time_features_enc) = enc

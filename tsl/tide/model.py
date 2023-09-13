@@ -93,7 +93,13 @@ class TIDE(tf.keras.Model):
         
     @tf.function
     def _assemble_feats(self, feats, cfeats):
-        """assemble all features."""
+        """assemble all features.
+
+        Args:
+            feats; (B, L)
+            cfeats: (nc, L)
+        
+        """
         all_feats = [feats]
         for i, emb in enumerate(self.cat_embs):
             all_feats.append(tf.transpose(emb(cfeats[i, :])))
@@ -101,6 +107,9 @@ class TIDE(tf.keras.Model):
     
     def call(self, inputs, training=True):
         # unpack inputs: past_data, future_features, tsidx
+        # past_data [(B, L), (nx, L), (ny, L)]
+        # future_features [(nx, L), (ny, L)]
+        
         past_data = inputs[0]
         future_features = inputs[1]
         # attributes of time series: (B, 1)

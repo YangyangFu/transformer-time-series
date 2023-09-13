@@ -43,7 +43,7 @@ ts = pd.read_csv(os.path.join(data_dir, ts_file), index_col=0, parse_dates=True)
 
 
 # %%
-print(ts.columns)
+ts_cols = ts.columns
 
 # %% [markdown]
 # ## Global time features and time series
@@ -55,4 +55,7 @@ del ts
 
 # %% [markdown]
 # ## Local features
-# No local features are needed
+# local features for the index of each column, this is necessary with dataloader that batch on time series.
+id = pd.DataFrame({'id': [i for i in range(len(ts_cols))]})
+
+dump(id, 'id', dump_dir)

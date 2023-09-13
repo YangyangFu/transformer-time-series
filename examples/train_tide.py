@@ -30,93 +30,13 @@ import tensorflow as tf
 from tensorflow import keras
 from tqdm import tqdm
 
-from tsl.tide import DataLoader
+from tsl.dataloader.batch_on_ts import DataLoader
+from tsl.utils.utils import seed_everything
 from tsl.tide import TIDE
 
-EPS = 1e-07
-FLAGS = flags.FLAGS
+seed_everything(1024)
 
-flags.DEFINE_integer('train_epochs', 10, 'Number of epochs to train')
-flags.DEFINE_integer('patience', 40, 'Patience for early stopping')
-flags.DEFINE_integer('epoch_len', None, 'number of iterations in an epoch')
-flags.DEFINE_integer(
-    'batch_size', 21, 'Batch size for the randomly sampled batch'
-)
-flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate')
-
-
-# Non tunable flags
-flags.DEFINE_string(
-    'expt_dir',
-    './results',
-    'The name of the experiment dir',
-)
-flags.DEFINE_string('dataset', 'etth1', 'The name of the dataset.')
-flags.DEFINE_string('datetime_col', 'date', 'Column having datetime.')
-flags.DEFINE_list('num_cov_cols', None, 'Column having numerical features.')
-flags.DEFINE_list('cat_cov_cols', None, 'Column having categorical features.')
-flags.DEFINE_integer('hist_len', 720, 'Length of the history provided as input')
-flags.DEFINE_integer('pred_len', 96, 'Length of pred len during training')
-flags.DEFINE_integer('num_layers', 1, 'Number of DNN layers')
-flags.DEFINE_integer('hidden_size', 256, 'Hidden size of DNN')
-flags.DEFINE_integer('decoder_output_dim', 4, 'Hidden d3 of DNN')
-flags.DEFINE_integer('final_decoder_hidden', 64, 'Hidden d3 of DNN')
-flags.DEFINE_list('ts_cols', None, 'Columns of time-series features')
-flags.DEFINE_integer(
-    'random_seed', None, 'The random seed to be used for TF and numpy'
-)
-flags.DEFINE_bool('normalize', True, 'normalize data for training or not')
-flags.DEFINE_bool('holiday', False, 'use holiday features or not')
-flags.DEFINE_bool('permute', True, 'permute the order of TS in training set')
-flags.DEFINE_bool('transform', False, 'Apply chronoml transform or not.')
-flags.DEFINE_bool('layer_norm', True, 'Apply layer norm or not.')
-flags.DEFINE_float('dropout_rate', 0.0, 'dropout rate')
-flags.DEFINE_integer('num_split', 1, 'number of splits during inference.')
-flags.DEFINE_integer(
-    'min_num_epochs', 0, 'minimum number of epochs before early stopping'
-)
-flags.DEFINE_integer('gpu', 0, 'index of gpu to be used.')
-
-DATA_DICT = {
-    'ettm2': {
-        'boundaries': [34560, 46080, 57600],
-        'data_path': '../datasets/ETT-small/ETTm2.csv',
-        'freq': '15min',
-    },
-    'ettm1': {
-        'boundaries': [34560, 46080, 57600],
-        'data_path': '../datasets/ETT-small/ETTm1.csv',
-        'freq': '15min',
-    },
-    'etth2': {
-        'boundaries': [8640, 11520, 14400],
-        'data_path': '../datasets/ETT-small/ETTh2.csv',
-        'freq': 'H',
-    },
-    'etth1': {
-        'boundaries': [8640, 11520, 14400],
-        'data_path': '../datasets/ETT-small/ETTh1.csv',
-        'freq': 'H',
-    },
-    'elec': {
-        'boundaries': [18413, 21044, 26304],
-        'data_path': '../datasets/electricity/electricity.csv',
-        'freq': 'H',
-    },
-    'traffic': {
-        'boundaries': [12280, 14036, 17544],
-        'data_path': '../datasets/traffic/traffic.csv',
-        'freq': 'H',
-    },
-    'weather': {
-        'boundaries': [36887, 42157, 52696],
-        'data_path': '../datasets/weather/weather.csv',
-        'freq': '10min',
-    },
-}
-
-np.random.seed(1024)
-tf.random.set_seed(1024)
+EPS=1E-06
 
 
 def _get_random_string(num_chars):
@@ -192,11 +112,8 @@ def val_step(inputs, y, model, loss_fcn):
 
 def training():
   """Training TS code."""
-  tf.random.set_seed(FLAGS.random_seed)
-  np.random.seed(FLAGS.random_seed)
-
   gpus = tf.config.experimental.list_physical_devices('GPU')
-  tf.config.experimental.set_visible_devices(gpus[FLAGS.gpu], 'GPU')
+  tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
   #tf.config.experimental.set_visible_devices([], 'GPU')
   if gpus:
     try:
@@ -208,72 +125,78 @@ def training():
   experiment_id = _get_random_string(8)
   logging.info('Experiment id: %s', experiment_id)
 
-  dataset = FLAGS.dataset
-  data_path = DATA_DICT[dataset]['data_path']
-  freq = DATA_DICT[dataset]['freq']
-  boundaries = DATA_DICT[dataset]['boundaries']
 
-  file_path = os.path.dirname(os.path.realpath(__file__))
-  data_path = os.path.join(file_path, data_path)
-  data_df = pd.read_csv(open(data_path, 'r'))
+  # get data path
+  file_path = os.path.dirname(os.path.abspath(__file__))
+  root_path = os.path.dirname(file_path)
+  data_path = os.path.join(root_path, "datasets", "ETT-small", "ETTh1")
 
-  if FLAGS.ts_cols:
-    ts_cols = DATA_DICT[dataset]['ts_cols']
-    num_cov_cols = DATA_DICT[dataset]['num_cov_cols']
-    cat_cov_cols = DATA_DICT[dataset]['cat_cov_cols']
-  else:
-    ts_cols = [col for col in data_df.columns if col != FLAGS.datetime_col]
-    num_cov_cols = None
-    cat_cov_cols = None
-  permute = FLAGS.permute
+  ts_file = 'ts.joblib'
+
+  source_seq_len = 720
+  pred_len = 96
+  target_seq_len = pred_len
+  target_cols=['HUFL','HULL','MUFL','MULL','LUFL','LULL','OT']
+  cat_cov_local_invariant_file='id.joblib'
+
+
   dtl = DataLoader(
-      data_path=data_path,
-      datetime_col=FLAGS.datetime_col,
-      num_cov_cols=num_cov_cols,
-      cat_cov_cols=cat_cov_cols,
-      ts_cols=np.array(ts_cols),
-      train_range=[0, boundaries[0]],
-      val_range=[boundaries[0], boundaries[1]],
-      test_range=[boundaries[1], boundaries[2]],
-      hist_len=FLAGS.hist_len,
-      pred_len=FLAGS.pred_len,
-      batch_size=min(FLAGS.batch_size, len(ts_cols)),
-      freq=freq,
-      normalize=FLAGS.normalize,
-      epoch_len=FLAGS.epoch_len,
-      holiday=FLAGS.holiday,
-      permute=permute,
+          data_path=data_path,
+          ts_file=ts_file,
+          num_cov_global_file=None,
+          cat_cov_global_file=None,
+          num_cov_local_variant_file=[],
+          cat_cov_local_variant_file=[],
+          num_cov_local_invariant_file=[],
+          cat_cov_local_invariant_file=cat_cov_local_invariant_file,
+          num_cov_local_variant_names=[],
+          cat_cov_local_variant_names=[],
+          target_cols=target_cols,
+          train_range=(0, 24*30*12),
+          val_range=(24*30*12, 24*30*16),
+          test_range=(24*30*16, 24*30*20),
+          hist_len=source_seq_len,
+          token_len=target_seq_len-pred_len,
+          pred_len=pred_len,
+          batch_size=min(32, len(target_cols)),
+          freq='H',
+          normalize=True,
+          use_time_features=True,
+          use_holiday=False,
+          use_holiday_distance=False,
+          normalize_time_features=True,
+          use_history_for_covariates=True
   )
 
   # Create model
+  hidden_size = 256
+  num_layers = 1
+  decoder_output_dim = 4
+  hidden_dims_time_decoder = 64
+  layer_norm = True 
+  dropout_rate = 0.0
+  
   model = TIDE(
-      pred_length=FLAGS.pred_len,
-      hidden_dims_encoder=[FLAGS.hidden_size] * FLAGS.num_layers, 
-      output_dims_encoder=[FLAGS.hidden_size] * FLAGS.num_layers, 
-      hidden_dims_decoder=[FLAGS.hidden_size], 
-      output_dims_decoder=[FLAGS.decoder_output_dim*FLAGS.pred_len], 
+      pred_length=pred_len,
+      hidden_dims_encoder=[hidden_size] * num_layers, 
+      output_dims_encoder=[hidden_size] * num_layers, 
+      hidden_dims_decoder=[hidden_size], 
+      output_dims_decoder=[decoder_output_dim*pred_len], 
       hidden_dims_time_encoder=64,
       output_dims_time_encoder=4,
-      hidden_dims_time_decoder=FLAGS.final_decoder_hidden,
-      cat_sizes=dtl.cat_sizes,
+      hidden_dims_time_decoder=hidden_dims_time_decoder,
+      cat_sizes=[1],# a fake 0 for categorical
       cat_emb_size=4,
-      num_ts=len(ts_cols),
-  #      transform=FLAGS.transform,
-      layer_norm=FLAGS.layer_norm,
-      dropout_rate=FLAGS.dropout_rate,
+      num_ts=len(target_cols),
+      layer_norm=layer_norm,
+      dropout_rate=dropout_rate,
   )
 
-  # Compute path to experiment directory
-  expt_dir = os.path.join(
-      FLAGS.expt_dir,
-      FLAGS.dataset + '_' + str(experiment_id) + '_' + str(FLAGS.pred_len),
-  )
-  os.makedirs(expt_dir, exist_ok=True)
-
-
+  
   # LR scheduling
+  learning_rate = 1e-04
   lr_schedule = keras.optimizers.schedules.CosineDecay(
-      initial_learning_rate=FLAGS.learning_rate,
+      initial_learning_rate=learning_rate,
       decay_steps=30 * dtl.train_range[1],
   )
 
@@ -282,14 +205,28 @@ def training():
   optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=1e3)
 
   # training
+  MAX_EPOCHS = 10
   epoch = 0
-  while epoch < FLAGS.train_epochs:
-    iterator = tqdm(dtl.tf_dataset(mode='train'), mininterval=2)
+  while epoch < MAX_EPOCHS:
+    iterator = tqdm(dtl.generate_dataset(mode='train', shuffle=True), mininterval=2)
     for i, batch in enumerate(iterator):
-      past_data = batch[:3]
-      future_features = batch[4:6]
-      tsidx = batch[-1]
-      targets = batch[3]
+      enc, dec = batch
+      (ts_enc, num_global_enc, cat_global_enc, 
+        num_local_variant_enc, cat_local_variant_enc, 
+        num_local_invariant_enc, cat_local_invariant_enc, time_features_enc) = enc
+      (ts_dec, num_global_dec, cat_global_dec, 
+        num_local_variant_dec, cat_local_variant_dec, 
+        num_local_invariant_dec, cat_local_invariant_dec, time_features_dec) = dec      
+      
+      # (B, L), (nx, L), ()
+      past_data = (tf.squeeze(ts_enc), tf.transpose(time_features_enc[0,:, :], perm=(1,0)), tf.zeros((1, source_seq_len)))
+      # (nx, H), () 
+      future_features = (tf.transpose(time_features_dec[0,:,:], perm=(1,0)), tf.zeros((1,target_seq_len)))
+      # (B,)
+      tsidx = tf.squeeze(cat_local_invariant_enc) # (B, )
+      # (B, H)
+      targets = tf.squeeze(ts_dec)
+
       loss = train_step((past_data, future_features, tsidx), targets, model, optimizer, loss_fcn)
       
     # train metrics

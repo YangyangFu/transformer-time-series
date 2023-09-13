@@ -89,7 +89,8 @@ class DataLoader():
         # read ts data
         self._ts = joblib.load(os.path.join(data_path, ts_file))
         self._ts = self._ts.resample(freq).mean()
-        
+        self._ts_cols = self._ts.columns
+        print(self._ts.head())
         # read global features
         if self.num_cov_global:
             self._num_cov_global = joblib.load(os.path.join(data_path, self.num_cov_global))
@@ -98,7 +99,11 @@ class DataLoader():
         if self.cat_cov_global:
             self._cat_cov_global = joblib.load(os.path.join(data_path, self.cat_cov_global))
             self._cat_cov_global_cols = self._cat_cov_global.columns
-        
+            self._cat_cov_global_sizes = []
+            for col in self._cat_cov_global_cols:
+                dct = {x: i for i, x in enumerate(self._cat_cov_global[col].unique())}
+                self._cat_cov_global_sizes.append(len(dct))
+                
         # read local features
         # read local time-variant; (Nl, T, M)
         if self.num_cov_local_variant:
@@ -135,10 +140,11 @@ class DataLoader():
             self._cat_cov_local_variant = pd.DataFrame(pd.concat(lvs, axis=1).values, columns=multi_index, index=self._ts.index)        
 
             # get categorical size for embedding use
-            self.cat_cov_local_variant_sizes = []
+            self._cat_cov_local_variant_cols = cat_cov_local_variant_names
+            self._cat_cov_local_variant_sizes = []
             for col in cat_cov_local_variant_names:
-                self.cat_cov_local_variant_sizes.append(len(pd.unique(pd.melt(self._cat_cov_local_variant[col], value_name=col)[col])))
-
+                self._cat_cov_local_variant_sizes.append(len(pd.unique(pd.melt(self._cat_cov_local_variant[col], value_name=col)[col])))
+                
             # reshape to 3-d tensor (n, T, M)
             self._cat_cov_local_variant = np.stack([self._cat_cov_local_variant[cov].values for cov in cat_cov_local_variant_names], axis=0)        
         
@@ -148,8 +154,8 @@ class DataLoader():
 
         if self.cat_cov_local_invariant:
             self._cat_cov_local_invariant = joblib.load(os.path.join(data_path, self.cat_cov_local_invariant))
-            self.cat_cov_local_invariant_names = self._cat_cov_local_invariant.columns 
-            self.cat_cov_local_invariant_sizes = [len(self._cat_cov_local_invariant[col].unique()) for col in self.cat_cov_local_invariant_names]
+            self._cat_cov_local_invariant_cols = self._cat_cov_local_invariant.columns 
+            self._cat_cov_local_invariant_sizes = [len(self._cat_cov_local_invariant[col].unique()) for col in self._cat_cov_local_invariant_cols]
             
         # time features dataframe
         print("Generating time features.................")
@@ -181,9 +187,18 @@ class DataLoader():
         #    self.data_cov = np.concatenate((self.data_cat_cov, self.data_num_cov), axis=1)
         #    self.data_cov_cols = self.cat_cov_cols + self.num_cov_cols
         
+        print(self._ts.head())
+        
     def _normalize_numeric_data(self):
         """ Normalize numeric features
         """
+        # time series
+        self.ts_scaler = StandardScaler()
+        ts_train = self._ts.iloc[self.train_range[0]:self.train_range[1],:]
+        self.ts_scaler = self.ts_scaler.fit(ts_train)
+        self._ts = self.ts_scaler.transform(self._ts)
+        self._ts = pd.DataFrame(self._ts, columns = self._ts_cols)
+        
         # numeric scaler for global features
         if self.num_cov_global:
             self.global_scaler = StandardScaler()
@@ -203,8 +218,7 @@ class DataLoader():
                 self.local_scaler[i] = self.local_scaler[i].fit(num_cov_local_train)
             # fir for all data
             self._num_cov_local_variant = np.stack([self.local_scaler[i].transform(self._num_cov_local_variant[i,:,:]) for i in range(n)], 
-                                                   axis=0)
-            
+                                                   axis=0)   
 
     def _split_window(self, window):
         """_summary_
