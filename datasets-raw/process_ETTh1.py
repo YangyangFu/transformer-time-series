@@ -70,6 +70,7 @@ dest_dir = '../datasets/ETTh1'
  
 # getting all the files in the source directory
 files = os.listdir(dump_dir)
-
 shutil.copytree(dump_dir, dest_dir, dirs_exist_ok=True)
 
+# delete source folder
+shutil.rmtree(dump_dir)
