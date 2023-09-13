@@ -17,4 +17,3 @@ gdown --fuzzy https://drive.google.com/file/d/1alE33S1GmP5wACMXaLu50rDIoVzBM4ik/
 unzip all_six_datasets.zip
 mv all_six_datasets/* .
 rm -rf all_six_datasets*
-mkdir ../results

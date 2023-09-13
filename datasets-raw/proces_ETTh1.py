@@ -30,10 +30,10 @@ def dump(df, name, path):
         save_dir.mkdir(parents=True)
     joblib.dump(df, save_dir / f'{name}.joblib', compress=True)
 
-dump_dir = os.path.join('./', 'ETTh1')
+dump_dir = os.path.join('./ETT-small', 'ETTh1')
 
 # %%
-data_dir = "./"
+data_dir = "./ETT-small"
 
 ts_file = 'ETTh1.csv'
 
@@ -59,3 +59,17 @@ del ts
 id = pd.DataFrame({'id': [i for i in range(len(ts_cols))]})
 
 dump(id, 'id', dump_dir)
+
+
+# %%
+import shutil
+import os
+ 
+# path to destination directory
+dest_dir = '../datasets/ETTh1'
+ 
+# getting all the files in the source directory
+files = os.listdir(dump_dir)
+
+shutil.copytree(dump_dir, dest_dir, dirs_exist_ok=True)
+
