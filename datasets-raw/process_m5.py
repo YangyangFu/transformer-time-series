@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
-from util import INDEX_COLUMNS, init, reduce_mem_usage
+# %%
+from tsl.utils.utils import reduce_mem_usage
 
 # %%
 def dump(df, name, path):
@@ -30,10 +31,10 @@ def dump(df, name, path):
         save_dir.mkdir(parents=True)
     joblib.dump(df, save_dir / f'{name}.joblib', compress=True)
 
-dump_dir = os.path.join('./data', 'individual')
+dump_dir = os.path.join('./m5', 'individual')
 
 # %%
-data_dir = "./raw-data/m5-forecasting-uncertainty/"
+data_dir = "./m5"
 
 sales_file = "sales_train_evaluation.csv"
 calendar_file = "calendar.csv"
@@ -99,16 +100,20 @@ items.head()
 # Need convert to integers using label encoding
 
 # %%
+ids = items.copy()
 label_encoders = {}
-for col in items.columns:
+for col in ids.columns:
     encoder = LabelEncoder()
-    items[col] = encoder.fit_transform(items[col])
+    ids[col] = encoder.fit_transform(ids[col])
     label_encoders[col] = encoder
 
+ids.head()
+
+# %%
 items.head()
 
 # %%
-dump(items, 'local_invariant', dump_dir)
+dump(ids, 'local_invariant', dump_dir)
 
 # %% [markdown]
 # ### Time-variant local features
@@ -181,6 +186,9 @@ pr = pr.merge(items)
 pr.columns, pr.head()
 
 # %%
+pr.head(), items.head()
+
+# %%
 #pr['released'] = (pr['date'] >= pr['release_date']).astype(int)
 pr = pr.drop(['wm_yr_wk', 'item_id', 'store_id', 'sell_price', 'dept_id', 'cat_id','state_id'], axis=1)
 pr = pr.pivot(index='date', columns='id', values='release_date')
@@ -250,5 +258,20 @@ del price
 # Based on the original price data, we can see some items only have price info after specific date. We will set that date as the release date. 
 # 
 # The NANs for testing during `d1942-d1969` are due to the fact that the testing data is not openly accessible during competition.
+
+# %% [markdown]
+# ## Move for Model
+# 
+# Finally, we move the processed to data to a final data preparation folder.
+
+# %%
+import shutil
+
+dest_dir = '../datasets/m5/individual'
+shutil.copytree(dump_dir, dest_dir, dirs_exist_ok=True)
+
+# delete source folder
+shutil.rmtree(dump_dir)
+
 
 
