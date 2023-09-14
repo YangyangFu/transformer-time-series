@@ -13,7 +13,7 @@
 # limitations under the License.
 
 #!/bin/bash
-gdown --fuzzy https://drive.google.com/file/d/1alE33S1GmP5wACMXaLu50rDIoVzBM4ik/view?usp=share_link
-unzip all_six_datasets.zip
-mv all_six_datasets/* .
-rm -rf all_six_datasets*
+gdown --fuzzy https://drive.google.com/file/d/1h2ubecIXd6Ji_mtEKin5G0-KtqNH09T5/view?usp=drive_link
+unzip time-series-datasets.zip
+mv time-series-datasets/* .
+rm -rf time-series-datasets*
