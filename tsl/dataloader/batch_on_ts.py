@@ -90,7 +90,7 @@ class DataLoader():
         self._ts = joblib.load(os.path.join(data_path, ts_file))
         self._ts = self._ts.resample(freq).mean()
         self._ts_cols = self._ts.columns
-        print(self._ts.head())
+
         # read global features
         if self.num_cov_global:
             self._num_cov_global = joblib.load(os.path.join(data_path, self.num_cov_global))
@@ -187,8 +187,7 @@ class DataLoader():
         #    self.data_cov = np.concatenate((self.data_cat_cov, self.data_num_cov), axis=1)
         #    self.data_cov_cols = self.cat_cov_cols + self.num_cov_cols
         
-        print(self._ts.head())
-        
+
     def _normalize_numeric_data(self):
         """ Normalize numeric features
         """

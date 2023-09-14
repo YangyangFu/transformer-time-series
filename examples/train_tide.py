@@ -220,6 +220,7 @@ def training():
       
       # Note the orginal paper uses constant 0 for categorical features if not specified.
       # (B, L), (nx, L), ()
+      # (past ts, past global covariates, past local invariants)
       past_data = (tf.squeeze(ts_enc), tf.transpose(time_features_enc[0,:, :], perm=(1,0)), tf.zeros((1, source_seq_len)))
       # (nx, H), () 
       future_features = (tf.transpose(time_features_dec[0,:,:], perm=(1,0)), tf.zeros((1,target_seq_len)))

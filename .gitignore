@@ -166,3 +166,4 @@ cython_debug/
 *__MACOSX
 *.joblib
 *.parquet
+*.h5
