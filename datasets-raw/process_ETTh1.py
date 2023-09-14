@@ -66,7 +66,7 @@ import shutil
 import os
  
 # path to destination directory
-dest_dir = '../datasets/ETTh1'
+dest_dir = '../datasets/ETT-small/ETTh1'
  
 # getting all the files in the source directory
 files = os.listdir(dump_dir)
