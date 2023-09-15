@@ -162,19 +162,19 @@ def training():
           freq='H',
           normalize=True,
           use_time_features=True,
-          use_holiday=False,
-          use_holiday_distance=False,
+          use_holiday=True,
+          use_holiday_distance=True,
           normalize_time_features=True,
           use_history_for_covariates=True
   )
 
   # Create model
-  hidden_size = 256
-  num_layers = 1
-  decoder_output_dim = 4
-  hidden_dims_time_decoder = 64
+  hidden_size = 512
+  num_layers = 2
+  decoder_output_dim = 32
+  hidden_dims_time_decoder = 16
   layer_norm = True 
-  dropout_rate = 0.0
+  dropout_rate = 0.5
   
   model = TIDE(
       pred_length=pred_len,
@@ -194,7 +194,7 @@ def training():
 
   
   # LR scheduling
-  learning_rate = 1e-04
+  learning_rate = 0.000984894211777642
   lr_schedule = keras.optimizers.schedules.CosineDecay(
       initial_learning_rate=learning_rate,
       decay_steps=30 * dtl.train_range[1],
@@ -205,7 +205,7 @@ def training():
   optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=1e3)
 
   # training
-  MAX_EPOCHS = 10
+  MAX_EPOCHS = 20
   epoch = 0
   while epoch < MAX_EPOCHS:
     iterator = tqdm(dtl.generate_dataset(mode='train', shuffle=True), mininterval=2)
