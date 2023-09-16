@@ -50,104 +50,273 @@ class MLPResidualStack(tf.keras.Model):
     def call(self, inputs, training=True):
         return self.mlp_residual_blocks(inputs, training=training)
 
+class Preprocessor(tf.keras.Model):
+    """ Preprocessor for TIDE model 
+
+    Args:
+        tf (_type_): _description_
+    """
+    def __init__(self, 
+                hist_len,
+                pred_len,
+                hidden_dims_time_encoder,
+                output_dims_time_encoder,
+                local_invariant_vocab_sizes,
+                local_invariant_emb_sizes,
+                global_vocab_sizes,
+                global_emb_sizes,
+                local_variant_vocab_sizes,
+                local_variant_emb_sizes,
+                layer_norm, 
+                dropout_rate):
+        
+        super(Preprocessor, self).__init__()
+        self.hist_len = hist_len
+        self.pred_len = pred_len
+        self.local_invariant_vocab_sizes = local_invariant_vocab_sizes
+        self.local_invariant_emb_sizes = local_invariant_emb_sizes
+        self.global_vocab_sizes = global_vocab_sizes    
+        self.global_emb_sizes = global_emb_sizes
+        self.local_variant_vocab_sizes = local_variant_vocab_sizes
+        self.local_variant_emb_sizes = local_variant_emb_sizes
+        
+        # local invariant categorical features
+        self.local_invariant_embedding = []
+        if self.local_invariant_vocab_sizes:
+            for i, vocab_size in enumerate(self.local_invariant_vocab_sizes):
+                self.local_invariant_embedding.append(
+                    tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=self.local_invariant_emb_sizes[i])
+                    )
+        
+        # global categorical features
+        self.global_embedding = []
+        if self.global_vocab_sizes:
+            for i, vocab_size in enumerate(self.global_vocab_sizes):
+                self.global_embedding.append(
+                    tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=self.global_emb_sizes[i])
+                    )
+        
+        # local variant categorical features
+        self.local_variant_embedding = []
+        if self.local_variant_vocab_sizes:
+            for i, vocab_size in enumerate(self.local_variant_vocab_sizes):
+                self.local_variant_embedding.append(
+                    tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=self.local_variant_emb_sizes[i])
+                    )
+
+        # time encoder for global features (per time step)
+        self.time_encoder_global = MLPResidualBlock(
+            hidden_dims_time_encoder, 
+            output_dims_time_encoder, 
+            layer_norm, 
+            dropout_rate
+        )
+        
+        # time encoder for local variant features (per time step)
+        self.time_encoder_local = MLPResidualBlock(
+            hidden_dims_time_encoder,
+            output_dims_time_encoder,
+            layer_norm,
+            dropout_rate
+        )
+        
+    def call(self, inputs, training=True):        
+        (ts_hist, # (B, L)
+         num_cov_local_invaraint, # (B, Nlin) 
+         cat_cov_local_invariant, # (B, Nlic)
+         time_features, # (L+H, Nt)
+         num_cov_global, # (L+H, Ngn) 
+         cat_cov_global, # (L+H, Ngc)
+         num_cov_local_variant, # (B, L+H, Nlvn)
+         cat_cov_local_variant # (B, L+H, Nlvc)
+        ) = inputs
+        
+        B = tf.shape(ts_hist)[0]
+        # ts features: pass
+
+        # local invariant features: (B, Nli) -> (B, Nli')
+        local_invariant = [tf.reshape((), (B, 0))] # empty
+        if num_cov_local_invaraint is not None and len(num_cov_local_invaraint.shape) > 0:
+            local_invariant.append(num_cov_local_invaraint)
+        for i, emb in enumerate(self.local_invariant_embedding):
+            local_invariant.append(emb(cat_cov_local_invariant[:, i]))
+        if len(local_invariant) > 1:
+            local_invariant = tf.concat(local_invariant, axis=1)
+        else:
+            local_invariant = None
+                
+        # global features 
+        # concatenate: (L+H, Ng)
+        global_features = [tf.reshape((), (self.hist_len+self.pred_len, 0))] 
+        if time_features is not None and len(time_features.shape) > 0:
+            global_features.append(time_features)
+        if num_cov_global is not None and len(num_cov_global.shape) > 0:
+            global_features.append(num_cov_global)
+        for i, emb in enumerate(self.global_embedding):
+            global_features.append(emb(cat_cov_global[:, i]))
+            
+        if len(global_features) > 1:
+            global_features = tf.concat(global_features, axis=1)
+            # time encoder for global features: (L+H, Ng) -> (L+H, Ng'')
+            global_features = self.time_encoder_global(global_features, training=training)
+        else:
+            global_features = None
+
+        
+        # local variant features: (B, L+H, Nlv) -> (B, L+H, Nlv')
+        # concatenate: (B, L+H, Nlv)
+        local_variant = [tf.reshape((), (B, self.hist_len+self.pred_len, 0))]
+        if num_cov_local_variant is not None and len(num_cov_local_variant.shape) > 0:
+            local_variant = [num_cov_local_variant]
+        for i, emb in enumerate(self.local_variant_embedding):
+            local_variant.append(emb(cat_cov_local_variant[:, :, i]))
+        if len(local_variant) > 1:
+            local_variant = tf.concat(local_variant, axis=2)
+            # time encoder for local variant features: (B, L+H, Nlv) -> (B, L+H, Nlv'')
+            local_variant = self.time_encoder_local(local_variant, training=training)
+        else:
+            local_variant = None
+            
+
+        
+        return (ts_hist, # (B, L)
+                local_invariant, # (B, Nli')
+                global_features, # (L+H, Ng')
+                local_variant # (B, L+H, Nlv'')
+        )
+        
+        
 class TIDE(tf.keras.Model):
     def __init__(self, 
-                 pred_length,
-                 hidden_dims_encoder, 
-                 output_dims_encoder, 
-                 hidden_dims_decoder, 
-                 output_dims_decoder, 
-                 hidden_dims_time_encoder,
-                 output_dims_time_encoder,
-                 hidden_dims_time_decoder,
-                 cat_sizes,
-                 cat_emb_size,
-                 num_ts,
-                 layer_norm=False, 
-                 dropout_rate=0.):
+                hist_length,
+                pred_length,
+                hidden_dims_encoder, 
+                output_dims_encoder, 
+                hidden_dims_decoder, 
+                output_dims_decoder, 
+                hidden_dims_time_encoder,
+                output_dims_time_encoder,
+                hidden_dims_time_decoder,
+                local_invariant_vocab_sizes,
+                local_invariant_emb_sizes,
+                global_vocab_sizes,
+                global_emb_sizes,
+                local_variant_vocab_sizes,
+                local_variant_emb_sizes,
+                layer_norm=False, 
+                dropout_rate=0.):
+        
         super(TIDE, self).__init__()
+        self.hist_length = hist_length
         self.pred_length = pred_length
+        self.hidden_dims_encoder = hidden_dims_encoder
+        self.output_dims_encoder = output_dims_encoder
+        self.hidden_dims_decoder = hidden_dims_decoder
+        self.output_dims_decoder = output_dims_decoder
+        self.hidden_dims_time_encoder = hidden_dims_time_encoder
+        self.output_dims_time_encoder = output_dims_time_encoder
+        self.hidden_dims_time_decoder = hidden_dims_time_decoder
+        self.output_dims_time_decoder = 1
+        self.local_invariant_vocab_sizes = local_invariant_vocab_sizes if local_invariant_vocab_sizes else []
+        self.local_invariant_emb_sizes = local_invariant_emb_sizes if local_invariant_emb_sizes else []
+        self.global_vocab_sizes = global_vocab_sizes if global_vocab_sizes else []
+        self.global_emb_sizes = global_emb_sizes if global_emb_sizes else []
+        self.local_variant_vocab_sizes = local_variant_vocab_sizes if local_variant_vocab_sizes else []
+        self.local_variant_emb_sizes = local_variant_emb_sizes if local_variant_emb_sizes else []
+        self.layer_norm = layer_norm
+        self.dropout_rate = dropout_rate
         
         # encoder
-        self.encoder = MLPResidualStack(hidden_dims_encoder, output_dims_encoder, layer_norm, dropout_rate)
+        self.encoder = MLPResidualStack(
+            self.hidden_dims_encoder, 
+            self.output_dims_encoder, 
+            self.layer_norm, 
+            self.dropout_rate)
         
         # decoder
-        self.decoder = MLPResidualStack(hidden_dims_decoder, output_dims_decoder, layer_norm, dropout_rate)
-        
-        # time encoder to project features at each step
-        self.time_encoder = MLPResidualBlock(hidden_dims_time_encoder, output_dims_time_encoder, layer_norm, dropout_rate)
+        self.decoder = MLPResidualStack(
+            self.hidden_dims_decoder, 
+            self.output_dims_decoder, 
+            self.layer_norm, 
+            self.dropout_rate)
         
         # time decoder to project features at each step
-        self.time_decoder = MLPResidualBlock(hidden_dims_time_decoder, 1, layer_norm, dropout_rate)
+        self.time_decoder = MLPResidualBlock(
+            self.hidden_dims_time_decoder, 
+            self.output_dims_time_decoder, 
+            self.layer_norm, 
+            self.dropout_rate)
         
         # global residual connection
-        self.global_residual = tf.keras.layers.Dense(pred_length, activation=None)
+        self.global_residual = tf.keras.layers.Dense(
+            self.pred_length, 
+            activation=None)
         
-        # embedding layers for categorical features and time series index (different targets)
-        self.cat_embs = []
-        for cat_size in cat_sizes:
-            self.cat_embs.append(
-            tf.keras.layers.Embedding(input_dim=cat_size, output_dim=cat_emb_size)
-        )
-        self.ts_embs = tf.keras.layers.Embedding(input_dim=num_ts, output_dim=16)
-        
-    @tf.function
-    def _assemble_feats(self, feats, cfeats):
-        """assemble all features.
+        # preprocessor layer
+        #self.cat_embs = []
+        #for cat_size in cat_sizes:
+        #    self.cat_embs.append(
+        #    tf.keras.layers.Embedding(input_dim=cat_size, output_dim=cat_emb_size)
+        #)
+        #self.ts_embs = tf.keras.layers.Embedding(input_dim=num_ts, output_dim=16)
+        self.preprocessor = Preprocessor(
+                hist_len=self.hist_length,
+                pred_len=self.pred_length,
+                hidden_dims_time_encoder=self.hidden_dims_time_encoder,
+                output_dims_time_encoder=self.output_dims_time_encoder,
+                local_invariant_vocab_sizes=self.local_invariant_vocab_sizes,
+                local_invariant_emb_sizes=self.local_invariant_emb_sizes,
+                global_vocab_sizes=self.global_vocab_sizes,
+                global_emb_sizes=self.global_emb_sizes,
+                local_variant_vocab_sizes=self.local_variant_vocab_sizes,
+                local_variant_emb_sizes=self.local_variant_emb_sizes,
+                layer_norm=self.layer_norm,
+                dropout_rate=self.dropout_rate
+                )
+    #@tf.function
+    def get_encoder_input(self, ts_hist, local_invariant, global_features, local_variant):
+        """ Concatenate all features to get encoder input.
 
         Args:
-            feats; (B, L)
-            cfeats: (nc, L)
-        
+            ts_hist (_type_): (B, L) 
+            local_invariant (_type_): (B, Nli')
+            global_features (_type_): (L+H, Ng')
+            local_variant (_type_): (B, L+H, Nlv'')
         """
-        all_feats = [feats]
-        for i, emb in enumerate(self.cat_embs):
-            all_feats.append(tf.transpose(emb(cfeats[i, :])))
-        return tf.concat(all_feats, axis=0)
+        B = tf.shape(ts_hist)[0]
+        if global_features is not None and len(global_features.shape) > 0:
+            global_features = tf.reshape(tf.tile(tf.expand_dims(global_features, axis=0), [B, 1, 1]), (B, -1))
+        if local_variant is not None and len(local_variant.shape) > 0:
+            local_variant = tf.reshape(local_variant, (B, -1))
+        else:
+            local_variant = tf.reshape((), (B, 0))
+        out = tf.concat([ts_hist, local_invariant, global_features, local_variant], axis=-1)
+        
+        # (B, L+Nli'+Ng'+Nlv'')
+        return out
     
     def call(self, inputs, training=True):
-        # unpack inputs: past_data, future_features, tsidx
-        # past_data [(B, L), (nx, L), (ny, L)]
-        # future_features [(nx, L), (ny, L)]
+        # inputs:
+        # ts_hist, # (B, L)
+        # num_cov_local_invaraint, # (B, Nlin) 
+        # cat_cov_local_invariant, # (B, Nlic)
+        # time_features, # (L+H, Nt)
+        # num_cov_global, # (L+H, Ngn) 
+        # cat_cov_global, # (L+H, Ngc)
+        # num_cov_local_variant, # (B, L+H, Nlvn)
+        # cat_cov_local_variant # (B, L+H, Nlvc)
         
-        past_data = inputs[0]
-        future_features = inputs[1]
-        # attributes of time series: (B, 1)
-        tsidx = inputs[2]
+        # preprocess to get encoder inputs
+        (ts_hist, # (B, L)
+        local_invariant, # (B, Nli')
+        global_features, # (L+H, Ng')
+        local_variant # (B, L+H, Nlv'')
+        ) = self.preprocessor(inputs, training=training)
         
-        # batch size B
-        batch_size = past_data[0].shape[0]
-        
-        # (B, L)
-        past_ts = past_data[0]
-        # (nx, L)
-        past_feats = self._assemble_feats(past_data[1], past_data[2])
-        # (nx, H)
-        future_feats = self._assemble_feats(future_features[0], future_features[1])
-        
-        ## Modeling
-        # time encoder: encode feature per time step
-        # (nx', L)
-        enc_past_feats = tf.transpose(self.time_encoder(
-            tf.transpose(past_feats), training = training))
-        # (nx', H)
-        enc_future_feats = tf.transpose(self.time_encoder(
-            tf.transpose(future_feats), training = training))
-        
-        # attributes embedding
-        # (B, ne) <- (B,)
-        ts_embs = self.ts_embs(tsidx) 
+        batch_size = tf.shape(ts_hist)[0]
+        enc_inputs = self.get_encoder_input(ts_hist, local_invariant, global_features, local_variant)
         
         # encoder
-        # (B, nx'*L) <-(B, nx', L) <- (nx', L)
-        enc_past = tf.repeat(tf.expand_dims(enc_past_feats, axis=0), batch_size, axis=0)
-        enc_past = tf.reshape(enc_past, [batch_size, -1]) 
-        # (B, nx'*H) <-(B, nx', H) <- (nx', H)
-        enc_future_tmp = tf.repeat(tf.expand_dims(enc_future_feats, axis=0), batch_size, axis=0)
-        enc_future = tf.reshape(enc_future_tmp, [batch_size, -1])
-        # 
-        # (B, L + nx'*L + nx'*H + ne) 
-        enc_inputs = tf.concat([past_ts, enc_past, enc_future, ts_embs], axis=1)
         # (B, output_dims_encoder) 
         enc_outputs = self.encoder(enc_inputs, training=training)
         
@@ -156,68 +325,32 @@ class TIDE(tf.keras.Model):
         dec_outputs = self.decoder(enc_outputs, training=training)
         
         # unflatten decoer
-        # (B, p, H)
-        dec_outputs_unflat = tf.reshape(dec_outputs, [batch_size, -1, self.pred_length])
+        # (B, H, p)
+        dec_outputs_unflat = tf.reshape(dec_outputs, [batch_size, self.pred_length, -1])
         
         # stack
-        # (B, p+nx', H) 
-        stack_outputs = tf.concat([dec_outputs_unflat, enc_future_tmp], axis=1)
+        # (B, H, p+Ng'+Nlv') 
+        global_features_future = tf.tile(tf.expand_dims(global_features[-self.pred_length:, :], axis=0), [batch_size, 1, 1])
+        
+        if local_variant is not None and len(local_variant.shape) > 0:
+            local_variant_future = tf.tile(local_variant[:,-self.pred_length:, :], [1, 1, 1])
+        else:
+            local_variant_future = tf.reshape((), (batch_size, self.pred_length, 0))
+            
+        stack_outputs = tf.concat([dec_outputs_unflat, global_features_future, local_variant_future], axis=-1)
         
         # time decoder
         # (B, H)
         out = self.time_decoder(
-            tf.transpose(stack_outputs, perm=[0,2,1]), training=training)
+            stack_outputs, training=training)
         out = tf.squeeze(out, axis=-1)
         
         # global residual
         # (B, H)
-        glob_residual_outputs = self.global_residual(past_ts)
+        glob_residual_outputs = self.global_residual(ts_hist)
         
         # skip connection
         # (B, H)
         out += glob_residual_outputs
         
         return out
-    
-    @tf.function
-    def train_step(self, past_data, future_features, ytrue, tsidx, optimizer, train_loss):
-        """One step of training."""
-        with tf.GradientTape() as tape:
-            all_preds = self((past_data, future_features, tsidx), training=True)
-            loss = train_loss(ytrue, all_preds)
-
-        grads = tape.gradient(loss, self.trainable_variables)
-        optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        return loss
-
-# add test
-if __name__ == "__main__":
-    batch_size = 16
-    pred_length = 720
-    past_length = 720
-    num_ts = 21
-    
-    tide = TIDE(pred_length=pred_length,
-                 hidden_dims_encoder=[256], 
-                 output_dims_encoder=[256], 
-                 hidden_dims_decoder=[256], 
-                 output_dims_decoder=[4*pred_length], 
-                 hidden_dims_time_encoder=64,
-                 output_dims_time_encoder=4,
-                 hidden_dims_time_decoder=64,
-                 cat_sizes=[1],
-                 cat_emb_size=4,
-                 num_ts=num_ts)
-    
-    past_data = (tf.random.uniform(shape=(batch_size, past_length), minval=0, maxval=1),
-                 tf.random.uniform(shape=(8, past_length), minval=0, maxval=1),
-                 tf.random.uniform(shape=(1, past_length), minval=0, maxval=1))
-        
-    feature_feats = (tf.random.uniform(shape=(8, pred_length), minval=0, maxval=1),
-                     tf.random.uniform(shape=(1, pred_length), minval=0, maxval=1))
-    tsindx = tf.random.uniform(shape=(batch_size,), minval=0, maxval=num_ts, dtype=tf.int32)
-    inputs = (past_data, feature_feats, tsindx)
-    # check model summary
-    out = tide(inputs)
-    print(tide.summary())
-    print(out.shape)

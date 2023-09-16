@@ -95,11 +95,11 @@ class DataLoader():
         if self.num_cov_global:
             self._num_cov_global = joblib.load(os.path.join(data_path, self.num_cov_global))
             self._num_cov_global_cols = self._num_cov_global.columns
-            
+        
+        self._cat_cov_global_sizes = []
         if self.cat_cov_global:
             self._cat_cov_global = joblib.load(os.path.join(data_path, self.cat_cov_global))
             self._cat_cov_global_cols = self._cat_cov_global.columns
-            self._cat_cov_global_sizes = []
             for col in self._cat_cov_global_cols:
                 dct = {x: i for i, x in enumerate(self._cat_cov_global[col].unique())}
                 self._cat_cov_global_sizes.append(len(dct))
@@ -122,7 +122,8 @@ class DataLoader():
             multi_index = pd.MultiIndex.from_product([num_cov_local_variant_names, ts_cols])
             self._num_cov_local_variant = pd.DataFrame(pd.concat(lvs, axis=1).values, columns=multi_index, index=self._ts.index)
             self._num_cov_local_variant = np.stack([self._num_cov_local_variant[cov].values for cov in num_cov_local_variant_names], axis=0)
-            
+
+        self._cat_cov_local_variant_sizes = []
         if self.cat_cov_local_variant:
             if isinstance(self.cat_cov_local_variant, str):
                 self.cat_cov_local_variant = [self.cat_cov_local_variant]
@@ -141,7 +142,6 @@ class DataLoader():
 
             # get categorical size for embedding use
             self._cat_cov_local_variant_cols = cat_cov_local_variant_names
-            self._cat_cov_local_variant_sizes = []
             for col in cat_cov_local_variant_names:
                 self._cat_cov_local_variant_sizes.append(len(pd.unique(pd.melt(self._cat_cov_local_variant[col], value_name=col)[col])))
                 
@@ -152,6 +152,7 @@ class DataLoader():
         if self.num_cov_local_invariant:
             self._num_cov_local_invariant = joblib.load(os.path.join(data_path, self.num_cov_local_invariant))
 
+        self._cat_cov_local_invariant_sizes = []
         if self.cat_cov_local_invariant:
             self._cat_cov_local_invariant = joblib.load(os.path.join(data_path, self.cat_cov_local_invariant))
             self._cat_cov_local_invariant_cols = self._cat_cov_local_invariant.columns 
