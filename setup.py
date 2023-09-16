@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name='tsl',
-    version='1.0',
+    version='0.1.0',
     packages=setuptools.find_packages(),
     url='github.com/yangyangfu/transformer-time-series',
     license='GPL-3.0',
